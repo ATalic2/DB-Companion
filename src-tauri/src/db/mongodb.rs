@@ -14,6 +14,9 @@ use anyhow::Result;
 use zeroize::Zeroizing;
 use tokio::process::Command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 pub struct MongoAdapter {
     uri:     Zeroizing<String>,
     db_name: String,
@@ -36,14 +39,22 @@ impl MongoAdapter {
 async fn mongosh_eval(uri: &str, _db_name: &str, js: &str) -> Result<String, DbError> {
     // Try mongosh first, fall back to mongo
     for bin in &["mongosh", "mongo"] {
-        let result = Command::new(bin)
-            .args([
-                uri,
-                "--quiet",
-                "--eval", js,
-            ])
-            .output()
-            .await;
+        let mut cmd = Command::new(bin);
+        cmd.args([
+            uri,
+            "--quiet",
+            "--eval", js,
+        ]);
+
+        // On Windows, prevent a console window from flashing up every time
+        // we shell out to mongosh/mongo.
+        #[cfg(target_os = "windows")]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let result = cmd.output().await;
 
         match result {
             Ok(out) => {
