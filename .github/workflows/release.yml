@@ -75,6 +75,6 @@ jobs:
           releaseName: "DbCompanion ${{ github.ref_name }}"
           releaseBody: |
             See the changelog for details on what's new in this release.
-          releaseDraft: true      # creates the release as a draft so you can review/edit before publishing
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
