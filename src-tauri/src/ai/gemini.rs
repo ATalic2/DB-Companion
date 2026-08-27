@@ -1,25 +1,22 @@
 //! ai/gemini.rs — Gemini provider implementing IAiProvider
 
-use super::{
-    ChatMessage, ChatRole, IAiProvider, ChangePlan,
-    ProviderCredentials, ProviderInfo,
-};
+use super::{ChangePlan, ChatMessage, ChatRole, IAiProvider, ProviderCredentials, ProviderInfo};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_MODEL: &str = "gemini-2.5-flash";
-const BASE_URL:      &str = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_MODEL: &str = "gemini-3.7-flash";
+const BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // ── Internal Gemini API types ─────────────────────────────────────────────────
 
 #[derive(Serialize)]
 struct GeminiRequest {
-    contents:           Vec<GeminiContent>,
+    contents: Vec<GeminiContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     system_instruction: Option<GeminiSystemInstruction>,
-    generation_config:  GeminiGenerationConfig,
+    generation_config: GeminiGenerationConfig,
 }
 
 #[derive(Serialize)]
@@ -29,7 +26,7 @@ struct GeminiSystemInstruction {
 
 #[derive(Serialize)]
 struct GeminiContent {
-    role:  String,
+    role: String,
     parts: Vec<GeminiPart>,
 }
 
@@ -40,13 +37,13 @@ struct GeminiPart {
 
 #[derive(Serialize)]
 struct GeminiGenerationConfig {
-    temperature:        f32,
+    temperature: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_output_tokens:  Option<u32>,
+    max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_mime_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    response_schema:    Option<serde_json::Value>,
+    response_schema: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -83,11 +80,15 @@ impl GeminiProvider {
     }
 
     fn model(creds: &ProviderCredentials) -> String {
-        creds.model.clone().unwrap_or_else(|| DEFAULT_MODEL.to_string())
+        creds
+            .model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string())
     }
 
     fn api_key(creds: &ProviderCredentials) -> Result<String> {
-        creds.api_key
+        creds
+            .api_key
             .as_ref()
             .map(|k| k.as_str().to_string())
             .ok_or_else(|| anyhow::anyhow!("No API key provided for Gemini"))
@@ -103,16 +104,25 @@ impl GeminiProvider {
     }
 
     fn build_contents(history: &[ChatMessage], message: &str) -> Vec<GeminiContent> {
-        let mut contents: Vec<GeminiContent> = history.iter()
+        let mut contents: Vec<GeminiContent> = history
+            .iter()
             .filter(|m| m.role != ChatRole::System)
             .map(|m| GeminiContent {
-                role:  if m.role == ChatRole::Assistant { "model".into() } else { "user".into() },
-                parts: vec![GeminiPart { text: m.content.clone() }],
+                role: if m.role == ChatRole::Assistant {
+                    "model".into()
+                } else {
+                    "user".into()
+                },
+                parts: vec![GeminiPart {
+                    text: m.content.clone(),
+                }],
             })
             .collect();
         contents.push(GeminiContent {
-            role:  "user".into(),
-            parts: vec![GeminiPart { text: message.into() }],
+            role: "user".into(),
+            parts: vec![GeminiPart {
+                text: message.into(),
+            }],
         });
         contents
     }
@@ -121,22 +131,22 @@ impl GeminiProvider {
     async fn post_logged(
         &self,
         endpoint: &str,
-        api_key:  &str,
-        body:     &GeminiRequest,
+        api_key: &str,
+        body: &GeminiRequest,
     ) -> Result<(GeminiResponse, String, String)> {
-        let request_json  = serde_json::to_string_pretty(body).unwrap_or_default();
-        let url           = format!("{}?key={}", endpoint, api_key);
-        let resp          = Self::client().post(&url).json(body).send().await?;
+        let request_json = serde_json::to_string_pretty(body).unwrap_or_default();
+        let url = format!("{}?key={}", endpoint, api_key);
+        let resp = Self::client().post(&url).json(body).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text   = resp.text().await.unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             bail!("Gemini API error {status}: {text}");
         }
 
         let response_text = resp.text().await?;
         let parsed = serde_json::from_str::<GeminiResponse>(&response_text)
-            .map_err(|e| anyhow::anyhow!("Failed to parse Gemini response: {e}\nRaw: {response_text}"))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse Gemini response: {e}"))?;
         Ok((parsed, request_json, response_text))
     }
 
@@ -144,31 +154,32 @@ impl GeminiProvider {
     pub async fn chat_with_log(
         &self,
         credentials: &ProviderCredentials,
-        history:     &[ChatMessage],
-        system:      &str,
-        message:     &str,
+        history: &[ChatMessage],
+        system: &str,
+        message: &str,
     ) -> Result<(String, String, String)> {
         let api_key = Self::api_key(credentials)?;
-        let model   = Self::model(credentials);
-        let url     = format!("{}/{}:generateContent", BASE_URL, model);
+        let model = Self::model(credentials);
+        let url = format!("{}/{}:generateContent", BASE_URL, model);
 
         let body = GeminiRequest {
             contents: Self::build_contents(history, message),
             system_instruction: Some(GeminiSystemInstruction {
-                parts: vec![GeminiPart { text: system.to_string() }],
+                parts: vec![GeminiPart {
+                    text: system.to_string(),
+                }],
             }),
             generation_config: GeminiGenerationConfig {
-                temperature:        0.4,
-                max_output_tokens:  None,
+                temperature: 0.4,
+                max_output_tokens: None,
                 response_mime_type: Some("application/json".into()),
-                response_schema:    None,
+                response_schema: None,
             },
         };
 
         let (resp, req_body, res_body) = self.post_logged(&url, &api_key, &body).await?;
         Ok((Self::extract_text(resp), req_body, res_body))
     }
-
 }
 
 // ── IAiProvider implementation ────────────────────────────────────────────────
@@ -177,12 +188,13 @@ impl GeminiProvider {
 impl IAiProvider for GeminiProvider {
     fn info(&self) -> ProviderInfo {
         ProviderInfo {
-            id:           "gemini".into(),
+            id: "gemini".into(),
             display_name: "Google Gemini".into(),
             models: vec![
-                "gemini-2.5-flash".into(),
-                "gemini-2.5-pro".into(),
-                "gemini-2.0-flash".into(),
+                "gemini-3.7-flash".into(),
+                "gemini-3.6-flash".into(),
+                "gemini-3.5-flash".into(),
+                "gemini-3.5-flash-lite".into(),
             ],
             requires_key: true,
             requires_url: false,
@@ -192,12 +204,12 @@ impl IAiProvider for GeminiProvider {
     async fn plan_changes(
         &self,
         credentials: &ProviderCredentials,
-        intent:      &str,
+        intent: &str,
         schema_text: &str,
     ) -> Result<ChangePlan> {
         let api_key = Self::api_key(credentials)?;
-        let model   = Self::model(credentials);
-        let url     = format!("{}/{}:generateContent", BASE_URL, model);
+        let model = Self::model(credentials);
+        let url = format!("{}/{}:generateContent", BASE_URL, model);
 
         let prompt = format!(
             r#"You are a senior database engineer and schema change safety expert.
@@ -214,7 +226,6 @@ Analyse the schema, plan the change, and respond ONLY with valid JSON.
 
 ## Rules
 - Prefer non-destructive operations (ADD COLUMN over DROP+ADD).
-- Use CONCURRENTLY for PostgreSQL index creation when safe.
 - Never drop data without explicit developer instruction.
 - risk_score: 1-3 = low (additive), 4-6 = medium (rename/index), 7-10 = high (DROP/ALTER TYPE).
 - Each step must be safe to run in sequence inside a single transaction.
@@ -224,63 +235,70 @@ Respond with JSON matching the schema exactly. No markdown, no explanation outsi
 
         let body = GeminiRequest {
             contents: vec![GeminiContent {
-                role:  "user".into(),
+                role: "user".into(),
                 parts: vec![GeminiPart { text: prompt }],
             }],
             system_instruction: None,
             generation_config: GeminiGenerationConfig {
-                temperature:        0.2,
-                max_output_tokens:  None,
+                temperature: 0.2,
+                max_output_tokens: None,
                 response_mime_type: Some("application/json".into()),
-                response_schema:    Some(change_plan_schema()),
+                response_schema: Some(change_plan_schema()),
             },
         };
 
         let (resp, _, _) = self.post_logged(&url, &api_key, &body).await?;
         let raw = Self::extract_text(resp);
-        let clean = raw.trim()
+        let clean = raw
+            .trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
             .trim();
 
-        Ok(serde_json::from_str(clean)
-            .map_err(|e| anyhow::anyhow!("JSON parse error: {e}\nRaw: {clean}"))?)
+        Ok(serde_json::from_str(clean).map_err(|e| anyhow::anyhow!("JSON parse error: {e}"))?)
     }
 
     async fn chat(
         &self,
         credentials: &ProviderCredentials,
-        history:     &[ChatMessage],
-        system:      &str,
-        message:     &str,
+        history: &[ChatMessage],
+        system: &str,
+        message: &str,
     ) -> Result<String> {
-        let (text, _, _) = self.chat_with_log(credentials, history, system, message).await?;
+        let (text, _, _) = self
+            .chat_with_log(credentials, history, system, message)
+            .await?;
         Ok(text)
     }
 
     async fn chat_stream(
         &self,
         credentials: &ProviderCredentials,
-        history:     &[ChatMessage],
-        system:      &str,
-        message:     &str,
-        on_chunk:    Box<dyn Fn(String) + Send + 'static>,
+        history: &[ChatMessage],
+        system: &str,
+        message: &str,
+        on_chunk: Box<dyn Fn(String) + Send + 'static>,
     ) -> Result<(String, String)> {
         let api_key = Self::api_key(credentials)?;
-        let model   = Self::model(credentials);
-        let url     = format!("{}/{}:streamGenerateContent?alt=sse&key={}", BASE_URL, model, api_key);
+        let model = Self::model(credentials);
+        let url = format!(
+            "{}/{}:streamGenerateContent?alt=sse&key={}",
+            BASE_URL, model, api_key
+        );
 
         let body = GeminiRequest {
             contents: Self::build_contents(history, message),
             system_instruction: Some(GeminiSystemInstruction {
-                parts: vec![GeminiPart { text: system.to_string() }],
+                parts: vec![GeminiPart {
+                    text: system.to_string(),
+                }],
             }),
             generation_config: GeminiGenerationConfig {
-                temperature:        0.4,
-                max_output_tokens:  None,
+                temperature: 0.4,
+                max_output_tokens: None,
                 response_mime_type: Some("application/json".into()),
-                response_schema:    None,
+                response_schema: None,
             },
         };
 
@@ -289,7 +307,7 @@ Respond with JSON matching the schema exactly. No markdown, no explanation outsi
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text   = resp.text().await.unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             bail!("Gemini API error {status}: {text}");
         }
 
@@ -299,7 +317,9 @@ Respond with JSON matching the schema exactly. No markdown, no explanation outsi
             for line in text.lines() {
                 let line = line.trim();
                 if let Some(json_str) = line.strip_prefix("data: ") {
-                    if json_str == "[DONE]" { break; }
+                    if json_str == "[DONE]" {
+                        break;
+                    }
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                         if let Some(t) = val
                             .pointer("/candidates/0/content/parts/0/text")
@@ -371,4 +391,6 @@ fn change_plan_schema() -> serde_json::Value {
 
 // Suppress unused warning — chat_response_schema is available for future use
 #[allow(dead_code)]
-fn _use_chat_schema() -> serde_json::Value { chat_response_schema() }
+fn _use_chat_schema() -> serde_json::Value {
+    chat_response_schema()
+}

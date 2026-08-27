@@ -65,12 +65,13 @@ function RiskBadge({ score }: { score: number }) {
   );
 }
 
-function InputArea({ apiKey, providerId, input, setInput, loading, onSend }: {
+function InputArea({ apiKey, providerId, input, setInput, loading, schemaLoading, onSend }: {
   apiKey:    string;
   providerId: string;
   input:    string;
   setInput: (v: string) => void;
   loading:  boolean;
+  schemaLoading: boolean;
   onSend:   () => void;
 }) {
   const [height,   setHeight]   = useState(80);
@@ -100,7 +101,7 @@ function InputArea({ apiKey, providerId, input, setInput, loading, onSend }: {
     };
   }, [dragging]);
 
-  const disabled = loading || !input.trim() || !apiKey;
+  const disabled = loading || schemaLoading || !input.trim() || !apiKey;
 
   return (
     <div style={{ borderTop: "1px solid #2a2f3d", background: "#111318", flexShrink: 0 }}>
@@ -122,8 +123,8 @@ function InputArea({ apiKey, providerId, input, setInput, loading, onSend }: {
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
-          placeholder={apiKey ? "Ask a question or describe a change…" : "No AI key selected…"}
-          disabled={!apiKey}
+          placeholder={schemaLoading ? "Loading database schema…" : apiKey ? "Ask a question or describe a change…" : "No AI key selected…"}
+          disabled={!apiKey || schemaLoading}
           style={{
             width: "100%", height: height,
             background: "#0a0b0d", border: "1px solid #2a2f3d",
@@ -177,7 +178,7 @@ function ModelSelect({ providerId }: { providerId: string }) {
   );
 }
 
-export function AiChat({ apiKey, providerId = "gemini", schemaMetadata: _schemaMetadata, onInsertSql, onRunQuery, onRefreshSchema }: Props) {
+export function AiChat({ apiKey, providerId = "gemini", schemaMetadata: _schemaMetadata, schemaLoading, onInsertSql, onRunQuery, onRefreshSchema }: Props & { schemaLoading: boolean }) {
   const defaultModel = getModelsForProvider(providerId)[0] ?? "";
   const [selectedModel, setSelectedModel] = useState(defaultModel);
 
@@ -571,7 +572,7 @@ export function AiChat({ apiKey, providerId = "gemini", schemaMetadata: _schemaM
         <div ref={bottomRef} />
       </div>
 
-      <InputArea apiKey={apiKey} providerId={providerId} input={input} setInput={setInput} loading={loading} onSend={send} />
+      <InputArea apiKey={apiKey} providerId={providerId} input={input} setInput={setInput} loading={loading} schemaLoading={schemaLoading} onSend={send} />
     </div>
     </ModelContext.Provider>
   );

@@ -5,6 +5,7 @@ interface Props {
   value:    string;
   onChange: (v: string) => void;
   onRun:    () => void;
+  onCancel: () => void;
   running:  boolean;
   scriptMode:         boolean;
   onToggleScriptMode: () => void;
@@ -21,7 +22,7 @@ const EXAMPLES = [
   { label: "dropColl",    cmd: '{"drop":"collection_name"}' },
 ];
 
-export function MongoEditor({ value, onChange, onRun, running, scriptMode, onToggleScriptMode }: Props) {
+export function MongoEditor({ value, onChange, onRun, onCancel, running, scriptMode, onToggleScriptMode }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
 
@@ -118,13 +119,22 @@ export function MongoEditor({ value, onChange, onRun, running, scriptMode, onTog
           Format
         </button>
 
-        <button
-          onClick={onRun}
-          disabled={running || !!jsonError}
-          style={{ background: running || jsonError ? "#0d1a35" : "#1e3a5f", border: "1px solid #4f8ef7", borderRadius: 4, padding: "3px 12px", color: running || jsonError ? "#4f8ef7aa" : "#4f8ef7", fontSize: 11, fontFamily: "inherit", cursor: running || jsonError ? "not-allowed" : "pointer" }}
-        >
-          {running ? "Running…" : "Run  ⌘↵"}
-        </button>
+        {running ? (
+          <button
+            onClick={onCancel}
+            style={{ background: "#450a0a", border: "1px solid #7f1d1d", borderRadius: 4, padding: "3px 12px", color: "#f87171", fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            onClick={onRun}
+            disabled={!!jsonError}
+            style={{ background: jsonError ? "#0d1a35" : "#1e3a5f", border: "1px solid #4f8ef7", borderRadius: 4, padding: "3px 12px", color: jsonError ? "#4f8ef7aa" : "#4f8ef7", fontSize: 11, fontFamily: "inherit", cursor: jsonError ? "not-allowed" : "pointer" }}
+          >
+            Run  ⌘↵
+          </button>
+        )}
       </div>
 
       {/* Editor */}

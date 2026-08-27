@@ -203,9 +203,9 @@ function DbForm({ onSave, onCancel }: {
           <label style={S.label}>Connection String</label>
           <input style={S.input} value={dsn} onChange={e => setDsn(e.target.value)}
             placeholder={
-              dbType === "postgresql" ? "postgres://user:pass@host:5432/dbname" :
-              dbType === "mssql"      ? "sqlserver://user:pass@host:1433?database=mydb" :
-              "mysql://user:pass@host:3306/dbname"
+              dbType === "postgresql" ? "Host=host;Port=5432;Database=mydb;Username=user;Password=..." :
+              dbType === "mssql"      ? "Server=host,1433;Database=mydb;User ID=user;Password=..." :
+              "Server=host;Port=3306;Database=mydb;User ID=user;Password=..."
             }
           />
         </div>
@@ -286,7 +286,7 @@ function DbForm({ onSave, onCancel }: {
 
 // ── AI provider definitions ───────────────────────────────────────────────────
 export const AI_PROVIDERS = [
-  { id: "gemini",    label: "Google Gemini",    available: true,  models: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-flash-lite"], keyLabel: "Gemini API Key",    keyPlaceholder: "Paste your Gemini API key here", keyHint: "aistudio.google.com",       keyHintUrl: "https://aistudio.google.com/apikey" },
+  { id: "gemini",    label: "Google Gemini",    available: true,  models: ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"], keyLabel: "Gemini API Key",    keyPlaceholder: "Paste your Gemini API key here", keyHint: "aistudio.google.com",       keyHintUrl: "https://aistudio.google.com/apikey" },
   { id: "openai",    label: "OpenAI",           available: false, models: ["gpt-4o", "gpt-4o-mini", "o3-mini"],                   keyLabel: "OpenAI API Key",    keyPlaceholder: "sk-...",                         keyHint: "platform.openai.com",       keyHintUrl: "https://platform.openai.com/api-keys" },
   { id: "anthropic", label: "Anthropic Claude", available: false, models: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"], keyLabel: "Anthropic API Key", keyPlaceholder: "sk-ant-...",                    keyHint: "console.anthropic.com",     keyHintUrl: "https://console.anthropic.com/settings/keys" },
   { id: "ollama",    label: "Ollama (local)",   available: false, models: ["llama3.3", "mistral", "codellama", "qwen2.5-coder"],                          keyLabel: "Base URL",          keyPlaceholder: "http://localhost:11434",         keyHint: "ollama.com",                keyHintUrl: "https://ollama.com" },
@@ -428,7 +428,7 @@ function ProfileRow({ p, dbTypeLabel, onDelete, onTest }: {
           <div style={{ fontSize: 13, fontWeight: 500 }}>{p.label}</div>
           <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace", marginTop: 2 }}>
             {p.db_type === "sqlite" ? p.filepath
-              : p.dsn ? p.dsn.replace(/:([^@]+)@/, ":••••@")
+              : p.uses_dsn || p.dsn ? "Encrypted connection string"
               : `${p.user ?? ""}@${p.host ?? ""}:${p.port ?? ""}/${p.dbname ?? ""}`}
           </div>
         </div>

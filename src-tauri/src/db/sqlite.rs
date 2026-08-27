@@ -4,10 +4,13 @@ use super::{
     build_schema_text, ColumnMeta, DbError, ForeignKeyMeta, IDatabaseAdapter, IndexMeta,
     SchemaMetadata, StatementOutcome, TableConstraint, TableMeta, TransactionResult,
 };
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use rusqlite::{Connection, OpenFlags};
-use std::{path::PathBuf, sync::{Arc, Mutex}};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 pub struct SqliteAdapter {
     conn: Arc<Mutex<Connection>>,
@@ -26,18 +29,27 @@ impl SqliteAdapter {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| DbError::Connection(e.to_string()))?;
 
-        Ok(Self { conn: Arc::new(Mutex::new(conn)), path })
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            path,
+        })
     }
 }
 
 #[async_trait]
 impl IDatabaseAdapter for SqliteAdapter {
-    fn driver_name(&self) -> &str { "sqlite" }
+    fn driver_name(&self) -> &str {
+        "sqlite"
+    }
 
     async fn get_schema_metadata(&self) -> Result<SchemaMetadata, DbError> {
-        let conn    = Arc::clone(&self.conn);
-        let db_name = self.path.file_name().unwrap_or_default()
-            .to_string_lossy().into_owned();
+        let conn = Arc::clone(&self.conn);
+        let db_name = self
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
 
         tokio::task::spawn_blocking(move || {
             let guard = conn.lock().map_err(|e| DbError::Schema(e.to_string()))?;
@@ -175,34 +187,43 @@ impl IDatabaseAdapter for SqliteAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run:  bool,
+        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
         let conn = Arc::clone(&self.conn);
 
         tokio::task::spawn_blocking(move || {
-            let guard = conn.lock().map_err(|e| DbError::Transaction(e.to_string()))?;
-
-            let sp = "db_companion_sp";
-            guard.execute_batch(&format!("SAVEPOINT {sp}"))
+            let guard = conn
+                .lock()
                 .map_err(|e| DbError::Transaction(e.to_string()))?;
 
-            let mut outcomes   = Vec::new();
+            let sp = "db_companion_sp";
+            guard
+                .execute_batch(&format!("SAVEPOINT {sp}"))
+                .map_err(|e| DbError::Transaction(e.to_string()))?;
+
+            let mut outcomes = Vec::new();
             let mut total_rows = 0u64;
-            let mut failed     = false;
-            let mut fail_msg   = String::new();
+            let mut failed = false;
+            let mut fail_msg = String::new();
 
             for sql in &commands {
                 match guard.execute(sql.as_str(), []) {
                     Ok(rows) => {
                         total_rows += rows as u64;
                         outcomes.push(StatementOutcome {
-                            sql: sql.clone(), rows_affected: rows as u64, ok: true, error: None,
+                            sql: sql.clone(),
+                            rows_affected: rows as u64,
+                            ok: true,
+                            error: None,
                         });
                     }
                     Err(e) => {
                         fail_msg = e.to_string();
                         outcomes.push(StatementOutcome {
-                            sql: sql.clone(), rows_affected: 0, ok: false, error: Some(fail_msg.clone()),
+                            sql: sql.clone(),
+                            rows_affected: 0,
+                            ok: false,
+                            error: Some(fail_msg.clone()),
                         });
                         failed = true;
                         break;
@@ -211,19 +232,21 @@ impl IDatabaseAdapter for SqliteAdapter {
             }
 
             if failed || dry_run {
-                guard.execute_batch(&format!("ROLLBACK TO SAVEPOINT {sp}; RELEASE {sp}"))
+                guard
+                    .execute_batch(&format!("ROLLBACK TO SAVEPOINT {sp}; RELEASE {sp}"))
                     .map_err(|e| DbError::Rollback(e.to_string()))?;
             } else {
-                guard.execute_batch(&format!("RELEASE {sp}"))
+                guard
+                    .execute_batch(&format!("RELEASE {sp}"))
                     .map_err(|e| DbError::Transaction(e.to_string()))?;
             }
 
             Ok(TransactionResult {
-                success:       !failed,
+                success: !failed,
                 dry_run,
                 rows_affected: total_rows,
-                statements:    outcomes,
-                error:         if failed { Some(fail_msg) } else { None },
+                statements: outcomes,
+                error: if failed { Some(fail_msg) } else { None },
             })
         })
         .await
@@ -232,7 +255,10 @@ impl IDatabaseAdapter for SqliteAdapter {
 
     async fn run_query(&self, sql: &str) -> Result<crate::commands::query::QueryResult, DbError> {
         tokio::task::spawn_blocking({
-            let adapter = SqliteAdapter { conn: Arc::clone(&self.conn), path: self.path.clone() };
+            let adapter = SqliteAdapter {
+                conn: Arc::clone(&self.conn),
+                path: self.path.clone(),
+            };
             let sql = sql.to_string();
             move || adapter.run_query_impl(&sql)
         })
@@ -244,7 +270,10 @@ impl IDatabaseAdapter for SqliteAdapter {
 /// Extract CHECK constraints from a SQLite CREATE TABLE DDL string.
 /// SQLite stores the original DDL in sqlite_master; we scan it for CHECK(...) clauses.
 fn extract_sqlite_checks(ddl: Option<&str>, table_name: &str) -> Vec<TableConstraint> {
-    let ddl = match ddl { Some(d) => d, None => return vec![] };
+    let ddl = match ddl {
+        Some(d) => d,
+        None => return vec![],
+    };
     let mut result = Vec::new();
     let upper = ddl.to_uppercase();
     let mut search = upper.as_str();
@@ -265,7 +294,10 @@ fn extract_sqlite_checks(ddl: Option<&str>, table_name: &str) -> Vec<TableConstr
                     '(' => depth += 1,
                     ')' => {
                         depth -= 1;
-                        if depth == 0 { end = start + i + 1; break; }
+                        if depth == 0 {
+                            end = start + i + 1;
+                            break;
+                        }
                     }
                     _ => {}
                 }
@@ -274,57 +306,39 @@ fn extract_sqlite_checks(ddl: Option<&str>, table_name: &str) -> Vec<TableConstr
                 let expr = ddl[start..end].to_string();
                 counter += 1;
                 result.push(TableConstraint {
-                    name:            format!("chk_{}_{}", table_name, counter),
+                    name: format!("chk_{}_{}", table_name, counter),
                     constraint_type: "CHECK".to_string(),
-                    definition:      expr,
+                    definition: expr,
                 });
             }
         }
         let advance = pos + 5;
-        idx   += advance;
+        idx += advance;
         search = &upper[idx..];
     }
     result
 }
 
-fn strip_sql_comments(sql: &str) -> String {
-    sql.lines()
-        .map(|line| {
-            let mut in_single = false;
-            let chars: Vec<char> = line.chars().collect();
-            let mut end = chars.len();
-            let mut i = 0;
-            while i < chars.len() {
-                match chars[i] {
-                    '\'' => { in_single = !in_single; i += 1; }
-                    '-' if !in_single && i + 1 < chars.len() && chars[i + 1] == '-' => {
-                        end = i;
-                        break;
-                    }
-                    _ => { i += 1; }
-                }
-            }
-            chars[..end].iter().collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 impl SqliteAdapter {
-    pub fn run_query_impl(&self, sql: &str) -> Result<crate::commands::query::QueryResult, DbError> {
+    pub fn run_query_impl(
+        &self,
+        sql: &str,
+    ) -> Result<crate::commands::query::QueryResult, DbError> {
         let conn = Arc::clone(&self.conn);
-        let guard = conn.lock().map_err(|e| DbError::Transaction(e.to_string()))?;
+        let guard = conn
+            .lock()
+            .map_err(|e| DbError::Transaction(e.to_string()))?;
 
-        let stmts: Vec<String> = strip_sql_comments(sql)
-            .split(';')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let stmts = super::split_sql_statements(sql);
 
         let mut last_result = crate::commands::query::QueryResult {
-            columns: vec![], rows: vec![], rows_affected: 0, execution_ms: 0, error: None,
-                capped: false,
-            };
+            columns: vec![],
+            rows: vec![],
+            rows_affected: 0,
+            execution_ms: 0,
+            error: None,
+            capped: false,
+        };
 
         for stmt in &stmts {
             match guard.prepare(stmt.as_str()) {
@@ -335,43 +349,72 @@ impl SqliteAdapter {
                         .collect();
 
                     match prepared.query_map([], |row| {
-                        Ok((0..col_count).map(|i| {
-                            match row.get_ref(i) {
-                                Ok(rusqlite::types::ValueRef::Integer(n)) => serde_json::Value::Number(n.into()),
-                                Ok(rusqlite::types::ValueRef::Real(f))    => serde_json::Number::from_f64(f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null),
-                                Ok(rusqlite::types::ValueRef::Text(t))    => serde_json::Value::String(String::from_utf8_lossy(t).into_owned()),
-                                Ok(rusqlite::types::ValueRef::Blob(b))    => serde_json::Value::String(format!("<blob {} bytes>", b.len())),
-                                _                                          => serde_json::Value::Null,
-                            }
-                        }).collect())
+                        Ok((0..col_count)
+                            .map(|i| match row.get_ref(i) {
+                                Ok(rusqlite::types::ValueRef::Integer(n)) => {
+                                    serde_json::Value::Number(n.into())
+                                }
+                                Ok(rusqlite::types::ValueRef::Real(f)) => {
+                                    serde_json::Number::from_f64(f)
+                                        .map(serde_json::Value::Number)
+                                        .unwrap_or(serde_json::Value::Null)
+                                }
+                                Ok(rusqlite::types::ValueRef::Text(t)) => {
+                                    serde_json::Value::String(
+                                        String::from_utf8_lossy(t).into_owned(),
+                                    )
+                                }
+                                Ok(rusqlite::types::ValueRef::Blob(b)) => {
+                                    serde_json::Value::String(format!("<blob {} bytes>", b.len()))
+                                }
+                                _ => serde_json::Value::Null,
+                            })
+                            .collect())
                     }) {
                         Ok(mapped) => {
-                            let rows = mapped
+                            let mut rows = mapped
+                                .take(crate::commands::query::ROW_CAP + 1)
                                 .collect::<rusqlite::Result<Vec<_>>>()
                                 .map_err(|e| DbError::Transaction(e.to_string()))?;
+                            let capped = rows.len() > crate::commands::query::ROW_CAP;
+                            rows.truncate(crate::commands::query::ROW_CAP);
                             let count = rows.len() as u64;
                             last_result = crate::commands::query::QueryResult {
-                                columns, rows, rows_affected: count, execution_ms: 0, error: None,
-                capped: false,
-            };
+                                columns,
+                                rows,
+                                rows_affected: count,
+                                execution_ms: 0,
+                                error: None,
+                                capped,
+                            };
                         }
                         Err(_) => {
-                            guard.execute_batch(stmt.as_str())
+                            guard
+                                .execute_batch(stmt.as_str())
                                 .map_err(|e| DbError::Transaction(e.to_string()))?;
                             last_result = crate::commands::query::QueryResult {
-                                columns: vec![], rows: vec![], rows_affected: 0, execution_ms: 0, error: None,
-                capped: false,
-            };
+                                columns: vec![],
+                                rows: vec![],
+                                rows_affected: 0,
+                                execution_ms: 0,
+                                error: None,
+                                capped: false,
+                            };
                         }
                     }
                 }
                 Err(_) => {
-                    guard.execute_batch(stmt.as_str())
+                    guard
+                        .execute_batch(stmt.as_str())
                         .map_err(|e| DbError::Transaction(e.to_string()))?;
                     last_result = crate::commands::query::QueryResult {
-                        columns: vec![], rows: vec![], rows_affected: 0, execution_ms: 0, error: None,
-                capped: false,
-            };
+                        columns: vec![],
+                        rows: vec![],
+                        rows_affected: 0,
+                        execution_ms: 0,
+                        error: None,
+                        capped: false,
+                    };
                 }
             }
         }

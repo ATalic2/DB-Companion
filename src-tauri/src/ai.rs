@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 /// A single message in a multi-turn chat conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    pub role:    ChatRole,
+    pub role: ChatRole,
     pub content: String,
 }
 
@@ -30,25 +30,25 @@ pub enum ChatRole {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeStep {
     #[serde(rename = "type")]
-    pub step_type:   String, // "SQL" | "CLI"
-    pub command:     Option<String>, // AI occasionally returns null for commentary steps
+    pub step_type: String, // "SQL" | "CLI"
+    pub command: Option<String>, // AI occasionally returns null for commentary steps
     pub description: String,
 }
 
 /// The canonical change plan all providers must return.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangePlan {
-    pub summary:    String,
+    pub summary: String,
     pub risk_score: u8, // 1–10
-    pub steps:      Vec<ChangeStep>,
+    pub steps: Vec<ChangeStep>,
 }
 
 /// Provider identity — serialized to frontend for display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderInfo {
-    pub id:          String, // "gemini", "openai", "anthropic", "ollama"
+    pub id: String, // "gemini", "openai", "anthropic", "ollama"
     pub display_name: String,
-    pub models:      Vec<String>,
+    pub models: Vec<String>,
     pub requires_key: bool,
     pub requires_url: bool, // for Ollama-style local providers
 }
@@ -57,9 +57,9 @@ pub struct ProviderInfo {
 /// Only the fields relevant to the provider will be populated.
 #[derive(Debug, Clone)]
 pub struct ProviderCredentials {
-    pub api_key:  Option<Zeroizing<String>>,
+    pub api_key: Option<Zeroizing<String>>,
     pub base_url: Option<String>, // for Ollama or custom OpenAI-compat endpoints
-    pub model:    Option<String>, // override default model
+    pub model: Option<String>,    // override default model
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -81,7 +81,7 @@ pub trait IAiProvider: Send + Sync {
     async fn plan_changes(
         &self,
         credentials: &ProviderCredentials,
-        intent:      &str,
+        intent: &str,
         schema_text: &str,
     ) -> Result<ChangePlan>;
 
@@ -93,9 +93,9 @@ pub trait IAiProvider: Send + Sync {
     async fn chat(
         &self,
         credentials: &ProviderCredentials,
-        history:     &[ChatMessage],
-        system:      &str,
-        message:     &str,
+        history: &[ChatMessage],
+        system: &str,
+        message: &str,
     ) -> Result<String>;
 
     /// Streaming variant — emits text chunks via `on_chunk` as they arrive,
@@ -107,10 +107,10 @@ pub trait IAiProvider: Send + Sync {
     async fn chat_stream(
         &self,
         credentials: &ProviderCredentials,
-        history:     &[ChatMessage],
-        system:      &str,
-        message:     &str,
-        on_chunk:    Box<dyn Fn(String) + Send + 'static>,
+        history: &[ChatMessage],
+        system: &str,
+        message: &str,
+        on_chunk: Box<dyn Fn(String) + Send + 'static>,
     ) -> Result<(String, String)> {
         let text = self.chat(credentials, history, system, message).await?;
         on_chunk(text.clone());
@@ -135,10 +135,10 @@ pub fn registered_providers() -> Vec<ProviderInfo> {
 /// Returns None if the provider ID is not recognised.
 pub fn get_provider(provider_id: &str) -> Option<Box<dyn IAiProvider>> {
     match provider_id {
-        "gemini"    => Some(Box::new(gemini::GeminiProvider)),
+        "gemini" => Some(Box::new(gemini::GeminiProvider)),
         // "openai"    => Some(Box::new(openai::OpenAiProvider)),
         // "anthropic" => Some(Box::new(anthropic::AnthropicProvider)),
         // "ollama"    => Some(Box::new(ollama::OllamaProvider)),
-        _           => None,
+        _ => None,
     }
 }

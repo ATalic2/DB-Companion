@@ -9,10 +9,10 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use sha2::{Sha256, Digest};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
-use serde::{Deserialize, Serialize};
 
 const VAULT_FILE: &str = "dbcompanion_vault.json";
 
@@ -53,55 +53,46 @@ fn save_vault(app: &AppHandle, vault: &Vault) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn stronghold_save(
-    app:   AppHandle,
-    key:   String,
-    value: String,
-) -> Result<(), String> {
+pub async fn stronghold_save(app: AppHandle, key: String, value: String) -> Result<(), String> {
     let cipher = Aes256Gcm::new(&derive_key());
-    let nonce  = Aes256Gcm::generate_nonce(&mut OsRng);
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
     let ciphertext = cipher
         .encrypt(&nonce, value.as_bytes())
         .map_err(|e| format!("Encryption failed: {e}"))?;
 
     let mut vault = load_vault(&app)?;
-    vault.entries.insert(
-        key,
-        (B64.encode(nonce), B64.encode(ciphertext)),
-    );
+    vault
+        .entries
+        .insert(key, (B64.encode(nonce), B64.encode(ciphertext)));
     save_vault(&app, &vault)?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn stronghold_get(
-    app: AppHandle,
-    key: String,
-) -> Result<Option<String>, String> {
+pub async fn stronghold_get(app: AppHandle, key: String) -> Result<Option<String>, String> {
     let vault = load_vault(&app)?;
 
     let (nonce_b64, ct_b64) = match vault.entries.get(&key) {
         Some(v) => v,
-        None    => return Ok(None),
+        None => return Ok(None),
     };
 
-    let nonce      = B64.decode(nonce_b64).map_err(|e| e.to_string())?;
+    let nonce = B64.decode(nonce_b64).map_err(|e| e.to_string())?;
     let ciphertext = B64.decode(ct_b64).map_err(|e| e.to_string())?;
 
-    let cipher    = Aes256Gcm::new(&derive_key());
+    let cipher = Aes256Gcm::new(&derive_key());
     let plaintext = cipher
         .decrypt(Nonce::from_slice(&nonce), ciphertext.as_ref())
         .map_err(|e| format!("Decryption failed: {e}"))?;
 
-    Ok(Some(String::from_utf8(plaintext).map_err(|e| e.to_string())?))
+    Ok(Some(
+        String::from_utf8(plaintext).map_err(|e| e.to_string())?,
+    ))
 }
 
 #[tauri::command]
-pub async fn stronghold_delete(
-    app: AppHandle,
-    key: String,
-) -> Result<(), String> {
+pub async fn stronghold_delete(app: AppHandle, key: String) -> Result<(), String> {
     let mut vault = load_vault(&app)?;
     vault.entries.remove(&key);
     save_vault(&app, &vault)?;

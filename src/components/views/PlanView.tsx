@@ -28,7 +28,7 @@ export function PlanView({ plan, loading, onBack, onNext }: Props) {
         <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".8px", textTransform: "uppercase", color: "#6b7280" }}>
           AI Change Plan
         </span>
-        <span style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>gemini-2.5-flash · structured output</span>
+        <span style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>gemini-3.7-flash · structured output</span>
       </div>
 
       <div style={{ padding: 16 }}>

@@ -26,8 +26,10 @@ export interface DbProfile {
   auth_source?: string;
   // SQLite only
   filepath?:    string;
-  // Raw DSN fallback
+  // Legacy-only: old versions persisted raw DSNs in localStorage. Startup
+  // migration moves this value to Stronghold and removes it from metadata.
   dsn?:         string;
+  uses_dsn?:    boolean;
   // NOTE: password is NOT stored here — it lives in Stronghold
 }
 
@@ -53,6 +55,7 @@ async function shDelete(key: string) {
 }
 
 const dbPasswordKey  = (id: string) => `db:profile:${id}:password`;
+const dbDsnKey       = (id: string) => `db:profile:${id}:dsn`;
 const aiKey      = (id: string) => `ai:profile:${id}:key`;
 
 // ── localStorage metadata helpers ────────────────────────────────────────────
@@ -95,6 +98,30 @@ export function useCredentialStore() {
   // Persist metadata on every change
   useEffect(() => { saveMeta(meta); }, [meta]);
 
+  // One-time migration for profiles created before DSNs were treated as
+  // secrets. Never remove the plaintext copy unless the encrypted write wins.
+  useEffect(() => {
+    const legacy = meta.dbProfiles.filter(p => p.dsn);
+    if (legacy.length === 0) return;
+    void Promise.all(legacy.map(async profile => {
+      await shSave(dbDsnKey(profile.id), profile.dsn!);
+      return profile.id;
+    })).then(migratedIds => {
+      const migrated = new Set(migratedIds);
+      setMeta(current => ({
+        ...current,
+        dbProfiles: current.dbProfiles.map(profile => {
+          if (!migrated.has(profile.id)) return profile;
+          const { dsn: _removed, ...safe } = profile;
+          return { ...safe, uses_dsn: true };
+        }),
+      }));
+    }).catch(() => {
+      // Preserve the legacy value if the vault is unavailable; a later launch
+      // will retry the migration rather than losing connection credentials.
+    });
+  }, []);
+
   // ── DB Profiles ─────────────────────────────────────────────────────────────
 
   const addDbProfile = useCallback(async (
@@ -102,10 +129,12 @@ export function useCredentialStore() {
     password: string,
   ) => {
     const id      = crypto.randomUUID();
-    const newProf = { ...profile, id };
+    const { dsn, ...metadata } = profile;
+    const newProf: DbProfile = { ...metadata, id, uses_dsn: Boolean(dsn) };
 
     // Save secret to Stronghold
     if (password) await shSave(dbPasswordKey(id), password);
+    if (dsn) await shSave(dbDsnKey(id), dsn);
 
     setMeta(m => ({ ...m, dbProfiles: [...m.dbProfiles, newProf] }));
     return newProf;
@@ -113,12 +142,18 @@ export function useCredentialStore() {
 
   const deleteDbProfile = useCallback(async (id: string) => {
     await shDelete(dbPasswordKey(id));
+    await shDelete(dbDsnKey(id));
     setMeta(m => ({ ...m, dbProfiles: m.dbProfiles.filter(p => p.id !== id) }));
   }, []);
 
   /** Retrieve the password for a profile from Stronghold. */
   const getDbPassword = useCallback((id: string): Promise<string | null> => {
     return shGet(dbPasswordKey(id));
+  }, []);
+
+  const getDbDsn = useCallback(async (profile: DbProfile): Promise<string | null> => {
+    const encrypted = await shGet(dbDsnKey(profile.id));
+    return encrypted ?? profile.dsn ?? null;
   }, []);
 
   // ── Gemini Profiles ─────────────────────────────────────────────────────────
@@ -155,6 +190,7 @@ export function useCredentialStore() {
     addDbProfile,
     deleteDbProfile,
     getDbPassword,
+    getDbDsn,
     addAiProfile,
     deleteAiProfile,
     getAiKey,
@@ -176,7 +212,7 @@ export interface ConnectArgs {
   auth_source?: string;
 }
 
-export function buildConnectArgs(profile: DbProfile, password: string): ConnectArgs {
+export function buildConnectArgs(profile: DbProfile, password: string, dsn?: string | null): ConnectArgs {
   return {
     db_type:     profile.db_type,
     host:        profile.host,
@@ -185,7 +221,7 @@ export function buildConnectArgs(profile: DbProfile, password: string): ConnectA
     password,
     dbname:      profile.dbname,
     filepath:    profile.filepath,
-    dsn:         profile.dsn,
+    dsn:         dsn ?? undefined,
     instance:    profile.instance,
     auth_source: profile.auth_source,
   };

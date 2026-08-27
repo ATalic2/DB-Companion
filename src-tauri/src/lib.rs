@@ -5,22 +5,35 @@ pub mod commands;
 pub mod db;
 
 use commands::{
-    connect_db, disconnect, get_schema, test_connection, open_sql_file,
-    plan_changes, execute_changes, ai_chat, ai_chat_stream, list_ai_providers,
-    stronghold_save, stronghold_get, stronghold_delete,
-    run_query, run_script, save_export_file,
+    ai_chat, ai_chat_stream, cancel_query, connect_db, disconnect, execute_changes, get_schema,
+    list_ai_providers, open_sql_file, plan_changes, run_query, run_script, save_export_file,
+    stronghold_delete, stronghold_get, stronghold_save, test_connection,
 };
-use db::IDatabaseAdapter;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+pub type AdapterHandle = Arc<dyn db::IDatabaseAdapter>;
+
+pub struct ActiveQuery {
+    pub id: uuid::Uuid,
+    pub cancellation: tokio_util::sync::CancellationToken,
+}
+
 pub struct AppState {
-    pub adapter: Arc<Mutex<Option<Box<dyn IDatabaseAdapter>>>>,
+    // Commands clone the Arc while holding this mutex, then release the mutex
+    // before doing any database I/O. This keeps disconnect/reconnect responsive.
+    pub adapter: Arc<Mutex<Option<AdapterHandle>>>,
+    pub schema: Arc<Mutex<Option<db::SchemaMetadata>>>,
+    pub active_query: Arc<Mutex<Option<ActiveQuery>>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        Self { adapter: Arc::new(Mutex::new(None)) }
+        Self {
+            adapter: Arc::new(Mutex::new(None)),
+            schema: Arc::new(Mutex::new(None)),
+            active_query: Arc::new(Mutex::new(None)),
+        }
     }
 }
 
@@ -51,6 +64,7 @@ pub fn run() {
             // Query
             run_query,
             run_script,
+            cancel_query,
             save_export_file,
         ])
         .run(tauri::generate_context!())

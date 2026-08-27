@@ -1,12 +1,12 @@
 //! commands/changes.rs
 
 use crate::{
-    ai::{get_provider, ChatMessage, ChatRole, ChangePlan, ProviderCredentials},
+    ai::{get_provider, ChangePlan, ChatMessage, ChatRole, ProviderCredentials},
     db::TransactionResult,
     AppState,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{State, Emitter};
+use tauri::{Emitter, State};
 use zeroize::Zeroizing;
 
 // ── Structured chat response ──────────────────────────────────────────────────
@@ -18,24 +18,24 @@ use zeroize::Zeroizing;
 pub struct ChatResponse {
     pub response_type: String,
     #[serde(default)]
-    pub message:       String, // default empty string if Gemini omits it
-    pub plan:          Option<ChangePlan>,
+    pub message: String, // default empty string if Gemini omits it
+    pub plan: Option<ChangePlan>,
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct ChatArgs {
-    pub message:     String,
-    pub history:     Vec<ChatMessageDto>,
-    pub api_key:     String,
+    pub message: String,
+    pub history: Vec<ChatMessageDto>,
+    pub api_key: String,
     pub provider_id: Option<String>,
-    pub model:       Option<String>,
+    pub model: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct ChatMessageDto {
-    pub role:    String,
+    pub role: String,
     pub content: String,
 }
 
@@ -91,13 +91,12 @@ When proposing more than 5 new indexes on one table, note the cumulative write o
 === END INDEX GUIDANCE ==="#
 }
 
-
 struct DbInstructions {
-    indexes:      &'static str,
-    json:         Option<&'static str>,
+    indexes: &'static str,
+    json: Option<&'static str>,
     live_changes: &'static str,
-    extra:        Option<&'static str>,
-    general:      &'static str,
+    extra: Option<&'static str>,
+    general: &'static str,
 }
 
 impl DbInstructions {
@@ -123,7 +122,10 @@ impl DbInstructions {
         out.push_str("\n\nGENERAL:\n");
         out.push_str(self.general);
 
-        out.push_str(&format!("\n=== END {}-SPECIFIC INSTRUCTIONS ===", db_name.to_uppercase()));
+        out.push_str(&format!(
+            "\n=== END {}-SPECIFIC INSTRUCTIONS ===",
+            db_name.to_uppercase()
+        ));
         out
     }
 }
@@ -138,14 +140,15 @@ fn postgresql_instructions() -> DbInstructions {
 - SP-GiST: non-balanced structures — IP ranges, geometric points.
 - Partial indexes: always consider WHERE clauses (e.g. WHERE deleted_at IS NULL).
 - Covering indexes: use INCLUDE (...) to add non-key columns for index-only scans.
-- CREATE INDEX CONCURRENTLY: always recommend this over a plain CREATE INDEX on any table with live traffic — avoids locking the table.",
+- On a live production table, explain that CREATE INDEX CONCURRENTLY can reduce write blocking, but never include CONCURRENTLY in an executable plan because DbCompanion applies plans inside a transaction. Present it only as a separate manual alternative.",
         json: Some("- Prefer jsonb over json — jsonb is binary, indexable with GIN, and supports operators. Plain json only makes sense when preserving exact input text matters.
 - Index specific JSONB paths with expression indexes: CREATE INDEX ON t ((data->>'field'))." ),
-        live_changes: "- ALTER TABLE on large tables acquires an ACCESS EXCLUSIVE lock. Mention this risk and suggest doing it during low-traffic windows or using CONCURRENTLY where applicable.
+        live_changes: "- ALTER TABLE on large tables acquires an ACCESS EXCLUSIVE lock. Mention this risk and suggest doing it during low-traffic windows. If a PostgreSQL concurrent index operation would help, present it only as a separate manual alternative outside the executable plan.
 - After large bulk inserts or deletes, recommend VACUUM ANALYZE to update planner statistics.",
         extra: Some("PARTITIONING:
 - For very large tables, consider RANGE, LIST, or HASH partitioning. Ask the user about data volume and access patterns before suggesting a strategy."),
-        general: "- Always schema-qualify table names (e.g. public.users, not just users).
+        general: "- DbCompanion applies PostgreSQL plans inside a single transaction. Never include CREATE INDEX CONCURRENTLY, DROP INDEX CONCURRENTLY, REINDEX CONCURRENTLY, or any other operation that cannot run inside a transaction in executable plan steps. Mention such operations only as separate manual alternatives outside the Apply flow.
+- Always schema-qualify table names (e.g. public.users, not just users).
 - Use $1, $2 placeholders for parameterised queries, never string interpolation.",
     }
 }
@@ -262,15 +265,14 @@ TRANSACTIONS:
 
 fn db_specific_instructions(db_type: &str) -> String {
     match db_type {
-        "postgresql"        => postgresql_instructions().format("PostgreSQL"),
+        "postgresql" => postgresql_instructions().format("PostgreSQL"),
         "mysql" => mysql_instructions().format("MySQL"),
-        "mssql"             => mssql_instructions().format("SQL Server"),
-        "sqlite"            => sqlite_instructions().format("SQLite"),
-        "mongodb"           => mongodb_instructions().format("MongoDB"),
-        _                   => String::new(),
+        "mssql" => mssql_instructions().format("SQL Server"),
+        "sqlite" => sqlite_instructions().format("SQLite"),
+        "mongodb" => mongodb_instructions().format("MongoDB"),
+        _ => String::new(),
     }
 }
-
 
 fn chat_system_prompt(schema_text: &str, db_type: &str) -> String {
     let is_mongo = db_type == "mongodb";
@@ -302,6 +304,7 @@ Each step "command" must be a valid MongoDB JSON command document — never SQL.
     "steps": [{ "type": "SQL", "command": "{\"find\":\"collection\",\"filter\":{}}", "description": "What this step does" }]
   }
 }
+
 Risk guide: find/count/aggregate = 1; insert/update = 2-4; delete/drop = 7-10."#
     } else {
         r#"--- MODE 2: PLAN ---
@@ -366,60 +369,61 @@ IMPORTANT: Always schema-qualify table names in SQL (e.g. public.airlines, not j
     )
 }
 
-#[tauri::command]
-pub async fn ai_chat(
-    args:  ChatArgs,
-    state: State<'_, AppState>,
-) -> Result<ChatResponse, String> {
-    let provider_id = args.provider_id.as_deref().unwrap_or("gemini");
-    let provider    = get_provider(provider_id)
-        .ok_or_else(|| format!("Unknown AI provider: {provider_id}"))?;
-
-    let (schema_text, db_type) = {
-        let guard = state.adapter.lock().await;
-        match &*guard {
-            Some(a) => match a.get_schema_metadata().await {
-                Ok(meta) => {
-                    let text = if meta.schema_text.trim().is_empty() {
-                        "Schema was fetched but appears empty — the database may have no tables yet.".into()
-                    } else {
-                        meta.schema_text
-                    };
-                    (text, meta.db_type)
-                }
-                Err(e) => (
-                    format!("Schema fetch failed: {e}. Tell the user the schema could not be loaded."),
-                    a.driver_name().to_string(),
-                ),
-            },
-            None => (
-                "No database is currently connected. Tell the user to select a database profile in the sidebar.".into(),
-                "unknown".into(),
-            ),
-        }
+async fn schema_for_ai(state: &AppState) -> Result<(String, String), String> {
+    let schema = if let Some(schema) = state.schema.lock().await.clone() {
+        schema
+    } else {
+        let adapter = state
+            .adapter
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| "No database is currently connected".to_string())?;
+        let schema = adapter
+            .get_schema_metadata()
+            .await
+            .map_err(|e| e.to_string())?;
+        *state.schema.lock().await = Some(schema.clone());
+        schema
     };
 
+    let text = if schema.schema_text.trim().is_empty() {
+        "Schema was fetched but appears empty — the database may have no tables yet.".into()
+    } else {
+        schema.schema_text
+    };
+    Ok((text, schema.db_type))
+}
+
+#[tauri::command]
+pub async fn ai_chat(args: ChatArgs, state: State<'_, AppState>) -> Result<ChatResponse, String> {
+    let provider_id = args.provider_id.as_deref().unwrap_or("gemini");
+    let provider =
+        get_provider(provider_id).ok_or_else(|| format!("Unknown AI provider: {provider_id}"))?;
+
+    let (schema_text, db_type) = schema_for_ai(&state)
+        .await
+        .unwrap_or_else(|e| (e, "unknown".into()));
+
     // Keep only the last MAX_HISTORY messages to stay within context limits.
-    let trimmed_history: Vec<_> = args.history
+    let trimmed_history: Vec<_> = args.history.iter().rev().take(MAX_HISTORY).rev().collect();
+
+    let history: Vec<ChatMessage> = trimmed_history
         .iter()
-        .rev()
-        .take(MAX_HISTORY)
-        .rev()
+        .map(|m| ChatMessage {
+            role: match m.role.as_str() {
+                "assistant" => ChatRole::Assistant,
+                "system" => ChatRole::System,
+                _ => ChatRole::User,
+            },
+            content: m.content.clone(),
+        })
         .collect();
 
-    let history: Vec<ChatMessage> = trimmed_history.iter().map(|m| ChatMessage {
-        role: match m.role.as_str() {
-            "assistant" => ChatRole::Assistant,
-            "system"    => ChatRole::System,
-            _           => ChatRole::User,
-        },
-        content: m.content.clone(),
-    }).collect();
-
     let credentials = ProviderCredentials {
-        api_key:  Some(Zeroizing::new(args.api_key)),
+        api_key: Some(Zeroizing::new(args.api_key)),
         base_url: None,
-        model:    args.model,
+        model: args.model,
     };
 
     let system = chat_system_prompt(&schema_text, &db_type);
@@ -432,13 +436,16 @@ pub async fn ai_chat(
 
     let clean = parse_response_raw(&raw);
     let mut response = serde_json::from_str::<ChatResponse>(clean)
-        .map_err(|e| format!("Failed to parse AI response as JSON: {e}\nRaw: {clean}"))?;
+        .map_err(|e| format!("Failed to parse AI response as JSON: {e}"))?;
 
     // Drop commentary steps with null/empty command or non-executable type.
     if let Some(plan) = response.plan.as_mut() {
         plan.steps.retain(|s| {
             matches!(s.step_type.to_uppercase().as_str(), "SQL" | "CLI")
-                && s.command.as_deref().map(|c| !c.trim().is_empty()).unwrap_or(false)
+                && s.command
+                    .as_deref()
+                    .map(|c| !c.trim().is_empty())
+                    .unwrap_or(false)
         });
     }
 
@@ -458,8 +465,8 @@ pub async fn ai_chat(
 
 #[tauri::command]
 pub async fn ai_chat_stream(
-    args:   ChatArgs,
-    state:  State<'_, AppState>,
+    args: ChatArgs,
+    state: State<'_, AppState>,
     window: tauri::Window,
 ) -> Result<ChatResponse, String> {
     let provider_id = args.provider_id.as_deref().unwrap_or("gemini");
@@ -467,56 +474,52 @@ pub async fn ai_chat_stream(
     let provider = crate::ai::get_provider(provider_id)
         .ok_or_else(|| format!("Unknown AI provider: {provider_id}"))?;
 
-    let (schema_text, db_type) = {
-        let guard = state.adapter.lock().await;
-        match &*guard {
-            Some(a) => match a.get_schema_metadata().await {
-                Ok(meta) => {
-                    let text = if meta.schema_text.trim().is_empty() {
-                        "Schema was fetched but appears empty.".into()
-                    } else {
-                        meta.schema_text
-                    };
-                    (text, meta.db_type)
-                }
-                Err(e) => (
-                    format!("Schema fetch failed: {e}."),
-                    a.driver_name().to_string(),
-                ),
-            },
-            None => ("No database is currently connected.".into(), "unknown".into()),
-        }
-    };
+    let (schema_text, db_type) = schema_for_ai(&state)
+        .await
+        .unwrap_or_else(|e| (e, "unknown".into()));
 
     const MAX_HISTORY: usize = 20;
     let trimmed: Vec<_> = args.history.iter().rev().take(MAX_HISTORY).rev().collect();
-    let history: Vec<crate::ai::ChatMessage> = trimmed.iter().map(|m| crate::ai::ChatMessage {
-        role: match m.role.as_str() {
-            "assistant" => crate::ai::ChatRole::Assistant,
-            "system"    => crate::ai::ChatRole::System,
-            _           => crate::ai::ChatRole::User,
-        },
-        content: m.content.clone(),
-    }).collect();
+    let history: Vec<crate::ai::ChatMessage> = trimmed
+        .iter()
+        .map(|m| crate::ai::ChatMessage {
+            role: match m.role.as_str() {
+                "assistant" => crate::ai::ChatRole::Assistant,
+                "system" => crate::ai::ChatRole::System,
+                _ => crate::ai::ChatRole::User,
+            },
+            content: m.content.clone(),
+        })
+        .collect();
 
     let credentials = crate::ai::ProviderCredentials {
-        api_key:  Some(zeroize::Zeroizing::new(args.api_key.clone())),
+        api_key: Some(zeroize::Zeroizing::new(args.api_key.clone())),
         base_url: None,
-        model:    args.model.clone(),
+        model: args.model.clone(),
     };
 
     let system = chat_system_prompt(&schema_text, &db_type);
 
-    let win     = window.clone();
+    let win = window.clone();
     let log_win = window.clone();
 
-    let (raw, req_body) = provider
-        .chat_stream(&credentials, &history, &system, &args.message, Box::new(move |chunk| {
-            let _ = win.emit("ai_chunk", &chunk);
-        }))
+    let (raw, _req_body) = provider
+        .chat_stream(
+            &credentials,
+            &history,
+            &system,
+            &args.message,
+            Box::new(move |chunk| {
+                let _ = win.emit("ai_chunk", &chunk);
+            }),
+        )
         .await
         .map_err(|e| {
-            crate::commands::logger::log_error(&log_win, format!("AI chat stream error: {e}"), None);
+            crate::commands::logger::log_error(
+                &log_win,
+                format!("AI chat stream error: {e}"),
+                None,
+            );
             e.to_string()
         })?;
 
@@ -524,33 +527,41 @@ pub async fn ai_chat_stream(
     crate::commands::logger::log_request(
         &window,
         format!("{provider_id} request → {model_label}"),
-        if req_body.is_empty() { None } else { Some(req_body) },
+        None,
     );
 
     let raw_owned = raw.clone();
     let raw = parse_response_raw(&raw_owned);
     let mut response = serde_json::from_str::<ChatResponse>(raw)
-        .map_err(|e| format!("Failed to parse AI response: {e}\nRaw: {raw}"))?;
+        .map_err(|e| format!("Failed to parse AI response: {e}"))?;
 
     // Drop any steps the AI emitted with null/empty command or a non-executable type
     // (e.g. commentary steps with "type": "answer" and "command": null).
     if let Some(plan) = response.plan.as_mut() {
         plan.steps.retain(|s| {
             matches!(s.step_type.to_uppercase().as_str(), "SQL" | "CLI")
-                && s.command.as_deref().map(|c| !c.trim().is_empty()).unwrap_or(false)
+                && s.command
+                    .as_deref()
+                    .map(|c| !c.trim().is_empty())
+                    .unwrap_or(false)
         });
     }
 
     if response.message.trim().is_empty() {
-        response.message = response.plan.as_ref()
+        response.message = response
+            .plan
+            .as_ref()
             .map(|p| p.summary.clone())
             .unwrap_or_else(|| "Here is my response.".into());
     }
 
     crate::commands::logger::log_response(
         &window,
-        format!("{provider_id} response → {model_label} → type={}", response.response_type),
-        Some(raw_owned),
+        format!(
+            "{provider_id} response → {model_label} → type={}",
+            response.response_type
+        ),
+        None,
     );
 
     Ok(response)
@@ -565,38 +576,48 @@ fn parse_response_raw(raw: &str) -> &str {
         .trim()
 }
 
-
 // ── Plan changes (direct, bypasses chat) ────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct PlanChangesArgs {
-    pub user_intent:  String,
-    pub api_key:      String,
-    pub provider_id:  Option<String>,
-    pub model:        Option<String>,
+    pub user_intent: String,
+    pub api_key: String,
+    pub provider_id: Option<String>,
+    pub model: Option<String>,
 }
 
 #[tauri::command]
 pub async fn plan_changes(
-    args:  PlanChangesArgs,
+    args: PlanChangesArgs,
     state: State<'_, AppState>,
 ) -> Result<ChangePlan, String> {
     let provider_id = args.provider_id.as_deref().unwrap_or("gemini");
-    let provider    = get_provider(provider_id)
-        .ok_or_else(|| format!("Unknown AI provider: {provider_id}"))?;
+    let provider =
+        get_provider(provider_id).ok_or_else(|| format!("Unknown AI provider: {provider_id}"))?;
 
     let schema = {
-        let guard = state.adapter.lock().await;
-        match &*guard {
-            Some(a) => a.get_schema_metadata().await.map_err(|e| e.to_string())?,
-            None    => return Err("No database connected".into()),
+        if let Some(schema) = state.schema.lock().await.clone() {
+            schema
+        } else {
+            let adapter = state
+                .adapter
+                .lock()
+                .await
+                .clone()
+                .ok_or_else(|| "No database connected".to_string())?;
+            let schema = adapter
+                .get_schema_metadata()
+                .await
+                .map_err(|e| e.to_string())?;
+            *state.schema.lock().await = Some(schema.clone());
+            schema
         }
     };
 
     let credentials = ProviderCredentials {
-        api_key:  Some(Zeroizing::new(args.api_key)),
+        api_key: Some(Zeroizing::new(args.api_key)),
         base_url: None,
-        model:    args.model,
+        model: args.model,
     };
 
     // For Gemini, use post() directly so we can log exact bodies
@@ -620,7 +641,7 @@ pub async fn plan_changes(
 #[derive(Deserialize)]
 pub struct ExecuteChangesArgs {
     pub commands: Vec<String>,
-    pub dry_run:  bool,
+    pub dry_run: bool,
 }
 
 #[derive(Serialize)]
@@ -630,17 +651,22 @@ pub struct ExecuteResult {
 
 #[tauri::command]
 pub async fn execute_changes(
-    args:   ExecuteChangesArgs,
-    state:  State<'_, AppState>,
+    args: ExecuteChangesArgs,
+    state: State<'_, AppState>,
     window: tauri::Window,
 ) -> Result<ExecuteResult, String> {
     let _mode = if args.dry_run { "dry run" } else { "execute" };
-    crate::commands::logger::log_request(&window,
-        format!("{} → {} statements", if args.dry_run { "Dry run" } else { "Execute" }, args.commands.len()),
-        Some(serde_json::to_string(&args.commands).unwrap_or_default()),
+    crate::commands::logger::log_request(
+        &window,
+        format!(
+            "{} → {} statements",
+            if args.dry_run { "Dry run" } else { "Execute" },
+            args.commands.len()
+        ),
+        None,
     );
-    let guard = state.adapter.lock().await;
-    match &*guard {
+    let adapter = state.adapter.lock().await.clone();
+    match adapter {
         Some(a) => {
             // Prepend SET search_path for PostgreSQL so unqualified table names resolve correctly.
             // pg_dump files include SET search_path = '' which clears it, and AI-generated SQL
@@ -652,16 +678,32 @@ pub async fn execute_changes(
             } else {
                 args.commands
             };
-            let result = a.execute_transaction(commands, args.dry_run)
+            let result = a
+                .execute_transaction(commands, args.dry_run)
                 .await
                 .map_err(|e| {
-                    crate::commands::logger::log_error(&window, format!("Change failed: {e}"), None);
+                    crate::commands::logger::log_error(
+                        &window,
+                        format!("Change failed: {e}"),
+                        None,
+                    );
                     e.to_string()
                 })?;
             if result.success {
-                crate::commands::logger::log_response(&window, format!("Execute succeeded · {} rows affected", result.rows_affected), None);
+                crate::commands::logger::log_response(
+                    &window,
+                    format!("Execute succeeded · {} rows affected", result.rows_affected),
+                    None,
+                );
             } else {
-                crate::commands::logger::log_error(&window, format!("Execute failed: {}", result.error.as_deref().unwrap_or("unknown")), None);
+                crate::commands::logger::log_error(
+                    &window,
+                    format!(
+                        "Execute failed: {}",
+                        result.error.as_deref().unwrap_or("unknown")
+                    ),
+                    None,
+                );
             }
             Ok(ExecuteResult { result })
         }

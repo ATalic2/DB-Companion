@@ -4,18 +4,20 @@ use super::{
     build_schema_text, ColumnMeta, DbError, ForeignKeyMeta, IDatabaseAdapter, IndexMeta,
     SchemaMetadata, StatementOutcome, TableConstraint, TableMeta, TransactionResult,
 };
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
+use futures_util::TryStreamExt;
 use sqlx::{mysql::MySqlPoolOptions, MySqlPool, Row};
 use zeroize::Zeroizing;
 
 pub struct MySqlAdapter {
-    pool:    MySqlPool,
+    pool: MySqlPool,
     db_name: String,
 }
 
 impl MySqlAdapter {
     pub async fn connect(dsn: Zeroizing<String>) -> Result<Self, DbError> {
+        let dsn = normalize_dsn(&dsn)?;
         let pool = MySqlPoolOptions::new()
             .max_connections(4)
             .connect(&dsn)
@@ -35,9 +37,40 @@ impl MySqlAdapter {
     }
 }
 
+fn normalize_dsn(dsn: &str) -> Result<Zeroizing<String>, DbError> {
+    let value = dsn.trim();
+    if value.contains("://") {
+        return Ok(Zeroizing::new(value.to_string()));
+    }
+
+    let values = super::connection_strings::parse_key_value(value)?;
+    let host = super::connection_strings::first_value(&values, &["server", "host", "data source"])
+        .ok_or_else(|| DbError::Connection("MySQL connection string is missing Server".into()))?;
+    let database =
+        super::connection_strings::first_value(&values, &["database", "database name", "db"])
+            .unwrap_or_default();
+    let user = super::connection_strings::first_value(&values, &["user id", "username", "user"])
+        .unwrap_or_default();
+    let password =
+        super::connection_strings::first_value(&values, &["password", "pwd"]).unwrap_or_default();
+    let port =
+        super::connection_strings::first_value(&values, &["port"]).unwrap_or_else(|| "3306".into());
+
+    Ok(Zeroizing::new(format!(
+        "mysql://{}:{}@{}:{}/{}",
+        urlencoding::encode(&user),
+        urlencoding::encode(&password),
+        urlencoding::encode(&host),
+        port,
+        urlencoding::encode(&database),
+    )))
+}
+
 #[async_trait]
 impl IDatabaseAdapter for MySqlAdapter {
-    fn driver_name(&self) -> &str { "mysql" }
+    fn driver_name(&self) -> &str {
+        "mysql"
+    }
 
     async fn get_schema_metadata(&self) -> Result<SchemaMetadata, DbError> {
         let table_rows = sqlx::query(
@@ -94,37 +127,44 @@ impl IDatabaseAdapter for MySqlAdapter {
             .await
             .map_err(|e| DbError::Schema(e.to_string()))?;
 
-            let columns = col_rows.iter().map(|r| {
-                let col_name: String = r.get("COLUMN_NAME");
-                let key: String = r.get("COLUMN_KEY");
-                let is_fk = key == "MUL" || fk_rows.iter().any(|fr| {
-                    let n: String = fr.get("COLUMN_NAME");
-                    n == col_name
-                });
-                let fk = if is_fk {
-                    fk_rows.iter().find(|fr| {
-                        let n: String = fr.get("COLUMN_NAME");
-                        n == col_name
-                    }).map(|fr| ForeignKeyMeta {
-                        constraint_name: fr.get("CONSTRAINT_NAME"),
-                        ref_table:       fr.get("REF_TABLE"),
-                        ref_column:      fr.get("REF_COLUMN"),
-                        on_delete:       fr.get("DELETE_RULE"),
-                        on_update:       fr.get("UPDATE_RULE"),
-                    })
-                } else {
-                    None
-                };
-                ColumnMeta {
-                    name:        col_name,
-                    data_type:   r.get("DATA_TYPE"),
-                    nullable:    r.get::<String, _>("IS_NULLABLE") == "YES",
-                    is_pk:       key == "PRI",
-                    is_fk,
-                    fk,
-                    default_val: r.get("COLUMN_DEFAULT"),
-                }
-            }).collect();
+            let columns = col_rows
+                .iter()
+                .map(|r| {
+                    let col_name: String = r.get("COLUMN_NAME");
+                    let key: String = r.get("COLUMN_KEY");
+                    let is_fk = key == "MUL"
+                        || fk_rows.iter().any(|fr| {
+                            let n: String = fr.get("COLUMN_NAME");
+                            n == col_name
+                        });
+                    let fk = if is_fk {
+                        fk_rows
+                            .iter()
+                            .find(|fr| {
+                                let n: String = fr.get("COLUMN_NAME");
+                                n == col_name
+                            })
+                            .map(|fr| ForeignKeyMeta {
+                                constraint_name: fr.get("CONSTRAINT_NAME"),
+                                ref_table: fr.get("REF_TABLE"),
+                                ref_column: fr.get("REF_COLUMN"),
+                                on_delete: fr.get("DELETE_RULE"),
+                                on_update: fr.get("UPDATE_RULE"),
+                            })
+                    } else {
+                        None
+                    };
+                    ColumnMeta {
+                        name: col_name,
+                        data_type: r.get("DATA_TYPE"),
+                        nullable: r.get::<String, _>("IS_NULLABLE") == "YES",
+                        is_pk: key == "PRI",
+                        is_fk,
+                        fk,
+                        default_val: r.get("COLUMN_DEFAULT"),
+                    }
+                })
+                .collect();
 
             // ── Table-level CHECK constraints (MySQL 8.0.16+) ──────────────
             // MySQL exposes CHECK constraints in information_schema.CHECK_CONSTRAINTS.
@@ -147,11 +187,14 @@ impl IDatabaseAdapter for MySqlAdapter {
             .await
             .unwrap_or_default(); // older MySQL versions may not have this table
 
-            let constraints: Vec<TableConstraint> = check_rows.iter().map(|r| TableConstraint {
-                name:            r.get("CONSTRAINT_NAME"),
-                constraint_type: "CHECK".to_string(),
-                definition:      r.get("CHECK_CLAUSE"),
-            }).collect();
+            let constraints: Vec<TableConstraint> = check_rows
+                .iter()
+                .map(|r| TableConstraint {
+                    name: r.get("CONSTRAINT_NAME"),
+                    constraint_type: "CHECK".to_string(),
+                    definition: r.get("CHECK_CLAUSE"),
+                })
+                .collect();
 
             // ── Indexes ────────────────────────────────────────────────────
             let idx_rows = sqlx::query(
@@ -168,21 +211,29 @@ impl IDatabaseAdapter for MySqlAdapter {
             .await
             .map_err(|e| DbError::Schema(e.to_string()))?;
 
-            let indexes = idx_rows.iter().map(|r| {
-                let cols_str: String = r.get("cols");
-                // MySQL reports BTREE / FULLTEXT / HASH / SPATIAL / RTREE — lowercase
-                // it to match the convention the other adapters + AI prompt use.
-                let index_type: String = r.get("INDEX_TYPE");
-                IndexMeta {
-                    name:       r.get("INDEX_NAME"),
-                    columns:    cols_str.split(',').map(String::from).collect(),
-                    unique:     r.get::<i8, _>("NON_UNIQUE") == 0,
-                    index_type: Some(index_type.to_lowercase()),
-                    predicate:  None,
-                }
-            }).collect();
+            let indexes = idx_rows
+                .iter()
+                .map(|r| {
+                    let cols_str: String = r.get("cols");
+                    // MySQL reports BTREE / FULLTEXT / HASH / SPATIAL / RTREE — lowercase
+                    // it to match the convention the other adapters + AI prompt use.
+                    let index_type: String = r.get("INDEX_TYPE");
+                    IndexMeta {
+                        name: r.get("INDEX_NAME"),
+                        columns: cols_str.split(',').map(String::from).collect(),
+                        unique: r.get::<i8, _>("NON_UNIQUE") == 0,
+                        index_type: Some(index_type.to_lowercase()),
+                        predicate: None,
+                    }
+                })
+                .collect();
 
-            tables.push(TableMeta { name: table_name, columns, indexes, constraints });
+            tables.push(TableMeta {
+                name: table_name,
+                columns,
+                indexes,
+                constraints,
+            });
         }
 
         let schema_text = build_schema_text(&tables, "mysql");
@@ -197,38 +248,48 @@ impl IDatabaseAdapter for MySqlAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run:  bool,
+        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
-        let mut tx = self.pool.begin().await
+        let mut tx = self
+            .pool
+            .begin()
+            .await
             .map_err(|e| DbError::Transaction(e.to_string()))?;
 
-        let mut outcomes   = Vec::new();
+        let mut outcomes = Vec::new();
         let mut total_rows = 0u64;
 
         for raw in &commands {
-            let stmts: Vec<String> = strip_sql_comments(raw)
-                .split(';')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let stmts = super::split_sql_statements(raw);
 
             for sql in &stmts {
                 match sqlx::query(sql).execute(&mut *tx).await {
                     Ok(r) => {
                         total_rows += r.rows_affected();
                         outcomes.push(StatementOutcome {
-                            sql: sql.to_string(), rows_affected: r.rows_affected(), ok: true, error: None,
+                            sql: sql.to_string(),
+                            rows_affected: r.rows_affected(),
+                            ok: true,
+                            error: None,
                         });
                     }
                     Err(e) => {
                         let msg = e.to_string();
                         outcomes.push(StatementOutcome {
-                            sql: sql.to_string(), rows_affected: 0, ok: false, error: Some(msg.clone()),
+                            sql: sql.to_string(),
+                            rows_affected: 0,
+                            ok: false,
+                            error: Some(msg.clone()),
                         });
-                        tx.rollback().await.map_err(|re| DbError::Rollback(re.to_string()))?;
+                        tx.rollback()
+                            .await
+                            .map_err(|re| DbError::Rollback(re.to_string()))?;
                         return Ok(TransactionResult {
-                            success: false, dry_run, rows_affected: total_rows,
-                            statements: outcomes, error: Some(msg),
+                            success: false,
+                            dry_run,
+                            rows_affected: total_rows,
+                            statements: outcomes,
+                            error: Some(msg),
                         });
                     }
                 }
@@ -236,88 +297,105 @@ impl IDatabaseAdapter for MySqlAdapter {
         }
 
         if dry_run {
-            tx.rollback().await.map_err(|e| DbError::Rollback(e.to_string()))?;
+            tx.rollback()
+                .await
+                .map_err(|e| DbError::Rollback(e.to_string()))?;
         } else {
-            tx.commit().await.map_err(|e| DbError::Transaction(e.to_string()))?;
+            tx.commit()
+                .await
+                .map_err(|e| DbError::Transaction(e.to_string()))?;
         }
 
         Ok(TransactionResult {
-            success: true, dry_run, rows_affected: total_rows,
-            statements: outcomes, error: None,
+            success: true,
+            dry_run,
+            rows_affected: total_rows,
+            statements: outcomes,
+            error: None,
         })
     }
 
     async fn run_query(&self, sql: &str) -> Result<crate::commands::query::QueryResult, DbError> {
-        use sqlx::Row;
         use sqlx::Column;
+        use sqlx::Row;
 
-        let stmts: Vec<String> = strip_sql_comments(sql)
-            .split(';')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let stmts = super::split_sql_statements(sql);
 
         let mut last_result = crate::commands::query::QueryResult {
-            columns: vec![], rows: vec![], rows_affected: 0, execution_ms: 0, error: None,
-                capped: false,
-            };
+            columns: vec![],
+            rows: vec![],
+            rows_affected: 0,
+            execution_ms: 0,
+            error: None,
+            capped: false,
+        };
 
         for stmt in &stmts {
-            match sqlx::query(stmt).persistent(false).fetch_all(&self.pool).await {
-                Ok(rows) => {
-                    let columns = if rows.is_empty() { vec![] } else {
-                        rows[0].columns().iter().map(|c| c.name().to_string()).collect()
+            let mut stream = sqlx::query(stmt).persistent(false).fetch(&self.pool);
+            let mut rows = Vec::new();
+            let fetch_result: Result<(), sqlx::Error> = async {
+                while rows.len() <= crate::commands::query::ROW_CAP {
+                    match stream.try_next().await? {
+                        Some(row) => rows.push(row),
+                        None => break,
+                    }
+                }
+                Ok(())
+            }
+            .await;
+            drop(stream);
+            match fetch_result {
+                Ok(()) => {
+                    let capped = rows.len() > crate::commands::query::ROW_CAP;
+                    rows.truncate(crate::commands::query::ROW_CAP);
+                    let columns = if rows.is_empty() {
+                        vec![]
+                    } else {
+                        rows[0]
+                            .columns()
+                            .iter()
+                            .map(|c| c.name().to_string())
+                            .collect()
                     };
-                    let result_rows = rows.iter().map(|row| {
-                        (0..row.columns().len()).map(|i| {
-                            row.try_get::<String, _>(i)
-                                .map(serde_json::Value::String)
-                                .unwrap_or(serde_json::Value::Null)
-                        }).collect()
-                    }).collect();
+                    let result_rows = rows
+                        .iter()
+                        .map(|row| {
+                            (0..row.columns().len())
+                                .map(|i| {
+                                    row.try_get::<String, _>(i)
+                                        .map(serde_json::Value::String)
+                                        .unwrap_or(serde_json::Value::Null)
+                                })
+                                .collect()
+                        })
+                        .collect();
                     last_result = crate::commands::query::QueryResult {
-                        columns, rows: result_rows,
+                        columns,
+                        rows: result_rows,
                         rows_affected: rows.len() as u64,
-                        execution_ms: 0, error: None,
-                capped: false,
-            };
+                        execution_ms: 0,
+                        error: None,
+                        capped,
+                    };
                 }
                 Err(_) => {
-                    let r = sqlx::query(stmt).persistent(false).execute(&self.pool).await
+                    let r = sqlx::query(stmt)
+                        .persistent(false)
+                        .execute(&self.pool)
+                        .await
                         .map_err(|e| DbError::Transaction(e.to_string()))?;
                     last_result = crate::commands::query::QueryResult {
-                        columns: vec![], rows: vec![],
+                        columns: vec![],
+                        rows: vec![],
                         rows_affected: r.rows_affected(),
-                        execution_ms: 0, error: None,
-                capped: false,
-            };
+                        execution_ms: 0,
+                        error: None,
+                        capped: false,
+                    };
                 }
             }
         }
 
         Ok(last_result)
     }
-}
-
-fn strip_sql_comments(sql: &str) -> String {
-    sql.lines()
-        .map(|line| {
-            let mut in_single = false;
-            let chars: Vec<char> = line.chars().collect();
-            let mut end = chars.len();
-            let mut i = 0;
-            while i < chars.len() {
-                match chars[i] {
-                    '\'' => { in_single = !in_single; i += 1; }
-                    '-' if !in_single && i + 1 < chars.len() && chars[i + 1] == '-' => {
-                        end = i;
-                        break;
-                    }
-                    _ => { i += 1; }
-                }
-            }
-            chars[..end].iter().collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }

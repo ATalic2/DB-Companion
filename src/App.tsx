@@ -125,7 +125,7 @@ function HelpMenu({ onAbout }: { onAbout: () => void }) {
 export default function App() {
   const {
     dbProfiles, aiProfiles,
-    addDbProfile, deleteDbProfile, getDbPassword,
+    addDbProfile, deleteDbProfile, getDbPassword, getDbDsn,
     addAiProfile, deleteAiProfile, getAiKey,
   } = useCredentialStore();
 
@@ -192,8 +192,11 @@ export default function App() {
     setSchemaLoading(true);
     setError(null);
     try {
-      const password = await getDbPassword(db.id) ?? "";
-      const result   = await connectDb(buildConnectArgs(db, password));
+      const [password, dsn] = await Promise.all([
+        getDbPassword(db.id),
+        getDbDsn(db),
+      ]);
+      const result = await connectDb(buildConnectArgs(db, password ?? "", dsn));
       if (!result.success) throw new Error(result.error ?? "Connection failed");
       setConnected(true);
       setSchema(await getSchema());
@@ -203,7 +206,7 @@ export default function App() {
     } finally {
       setSchemaLoading(false);
     }
-  }, [getDbPassword, connectDb, getSchema]);
+  }, [getDbPassword, getDbDsn, connectDb, getSchema]);
 
   useEffect(() => {
     if (activeDb) connectAndLoadSchema(activeDb);
@@ -278,13 +281,8 @@ export default function App() {
                         <span style={{ color: connected ? "#22c55e" : "#9ca3af" }}>{connected ? "Connected" : "Not connected"}</span>
                         {(() => {
                           const summary = (() => {
-                            if (activeDb.db_type === "sqlite") return activeDb.filepath ?? activeDb.dsn ?? "";
-                            if (activeDb.dsn) {
-                              try {
-                                const u = new URL(activeDb.dsn.replace(/^postgresql/, 'http').replace(/^postgres/, 'http'));
-                                return `${u.username}@${u.hostname}:${u.port}${u.pathname}`;
-                              } catch { return activeDb.dsn; }
-                            }
+                            if (activeDb.db_type === "sqlite") return activeDb.filepath ?? "";
+                            if (activeDb.uses_dsn || activeDb.dsn) return "Encrypted connection string";
                             // Fallback for profiles saved via individual fields (no raw DSN stored)
                             if (activeDb.host) {
                               const target = `${activeDb.host}${activeDb.port ? ":" + activeDb.port : ""}${activeDb.dbname ? "/" + activeDb.dbname : ""}`;
@@ -370,8 +368,8 @@ export default function App() {
       {/* ── Modals ── */}
       {modal === "db"     && <DbProfilesModal dbProfiles={dbProfiles} onAddDb={addDbProfile} onDeleteDb={deleteDbProfile} onTestDb={async (id) => {
         const db = dbProfiles.find(p => p.id === id)!;
-        const password = await getDbPassword(db.id) ?? "";
-        return invoke<{ success: boolean; message: string }>("test_connection", { args: buildConnectArgs(db, password) });
+        const [password, dsn] = await Promise.all([getDbPassword(db.id), getDbDsn(db)]);
+        return invoke<{ success: boolean; message: string }>("test_connection", { args: buildConnectArgs(db, password ?? "", dsn) });
       }} onClose={() => setModal(null)} />}
       {modal === "ai" && <AiKeysModal aiProfiles={aiProfiles} onAddAi={(l, k, p) => addAiProfile(l, k, p)} onDeleteAi={deleteAiProfile} onClose={() => setModal(null)} />}
       {modal === "about"  && <AboutModal onClose={() => setModal(null)} />}

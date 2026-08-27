@@ -1,11 +1,11 @@
-pub mod connection;
 pub mod changes;
-pub mod stronghold;
-pub mod query;
+pub mod connection;
 pub mod logger;
+pub mod query;
+pub mod stronghold;
 
-pub use connection::{connect_db, disconnect, test_connection, get_schema, open_sql_file};
-pub use changes::{plan_changes, execute_changes, ai_chat, ai_chat_stream, list_ai_providers};
-pub use stronghold::{stronghold_save, stronghold_get, stronghold_delete};
-pub use query::{run_query, run_script, save_export_file};
-pub use logger::{log_info, log_debug, log_warn, log_error, log_request, log_response};
+pub use changes::{ai_chat, ai_chat_stream, execute_changes, list_ai_providers, plan_changes};
+pub use connection::{connect_db, disconnect, get_schema, open_sql_file, test_connection};
+pub use logger::{log_debug, log_error, log_info, log_request, log_response, log_warn};
+pub use query::{cancel_query, run_query, run_script, save_export_file};
+pub use stronghold::{stronghold_delete, stronghold_get, stronghold_save};

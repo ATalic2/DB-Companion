@@ -8,17 +8,20 @@ use tauri::{Emitter, Window};
 
 #[derive(Serialize, Clone)]
 pub struct LogEvent {
-    pub level:   String,
+    pub level: String,
     pub message: String,
-    pub detail:  Option<String>,
+    pub detail: Option<String>,
 }
 
 fn emit(window: &Window, level: &str, message: impl Into<String>, detail: Option<String>) {
-    let _ = window.emit("app_log", LogEvent {
-        level:   level.into(),
-        message: message.into(),
-        detail,
-    });
+    let _ = window.emit(
+        "app_log",
+        LogEvent {
+            level: level.into(),
+            message: message.into(),
+            detail,
+        },
+    );
 }
 
 pub fn log_info(w: &Window, msg: impl Into<String>, detail: Option<String>) {

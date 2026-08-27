@@ -61,9 +61,10 @@ function DragHandle({ onMouseDown, collapsed, onToggle, label }: { onMouseDown: 
 
 const SQL_STORAGE_KEY   = "dbcompanion_editor_sql";
 const MONGO_STORAGE_KEY = "dbcompanion_editor_mongo";
+const QUERY_TIMEOUT_KEY = "dbcompanion_query_timeout_ms";
 
 export function QueryPage({
-  schema, schemaLoading: _schemaLoading, onRefreshSchema,
+  schema, schemaLoading, onRefreshSchema,
   activeAi, getAiKey,
   chatWidth, chatCollapsed, onChatDragStart, onChatToggle,
 }: Props) {
@@ -94,6 +95,15 @@ export function QueryPage({
   const [aiKey,     setAiKey]     = useState("");
   const [bottomTab, setBottomTab] = useState<BottomTab>("results");
   const [mongoScriptMode, setMongoScriptMode] = useState(false);
+  const [timeoutMs, setTimeoutMs] = useState(() => {
+    const saved = Number(localStorage.getItem(QUERY_TIMEOUT_KEY));
+    return Number.isFinite(saved) && saved >= 0 ? saved : 60_000;
+  });
+
+  const changeTimeout = (value: number) => {
+    setTimeoutMs(value);
+    localStorage.setItem(QUERY_TIMEOUT_KEY, String(value));
+  };
 
   // Reset result when switching db types so stale SQL results don't show in mongo view
   useEffect(() => { setResult(null); }, [isMongo]);
@@ -125,29 +135,50 @@ export function QueryPage({
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [draggingVert]);
 
-  // Strip -- comments from a SQL string, respecting single-quoted strings.
-  // Keeps the same line structure so cursor positions stay valid.
-  const stripSqlComments = (sql: string): string =>
-    sql.split("\n").map(line => {
-      let inSingle = false;
-      for (let i = 0; i < line.length; i++) {
-        if (line[i] === "'") { inSingle = !inSingle; }
-        else if (!inSingle && line[i] === "-" && line[i + 1] === "-") {
-          return line.slice(0, i);
-        }
-      }
-      return line;
-    }).join("\n");
-
   const SQL_VERBS = /\b(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TRUNCATE|WITH|SET|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|VACUUM|ANALYZE|COMMENT|DO|CALL|COPY)\b/i;
 
   const getStatementAtCursor = (fullSql: string, cursorPos: number): string => {
-    const stripped = stripSqlComments(fullSql);
     let start = 0;
     const stmts: { text: string; start: number; end: number }[] = [];
-    for (let i = 0; i <= stripped.length; i++) {
-      if (i === stripped.length || stripped[i] === ";") {
-        const text = stripped.slice(start, i).trim();
+    let quote: string | null = null;
+    let dollarTag: string | null = null;
+    let lineComment = false;
+    let blockComment = false;
+
+    for (let i = 0; i <= fullSql.length; i++) {
+      const ch = fullSql[i];
+      const next = fullSql[i + 1];
+      if (lineComment) {
+        if (ch === "\n" || i === fullSql.length) lineComment = false;
+        else continue;
+      }
+      if (blockComment) {
+        if (ch === "*" && next === "/") { blockComment = false; i++; }
+        continue;
+      }
+      if (dollarTag) {
+        if (fullSql.startsWith(dollarTag, i)) { i += dollarTag.length - 1; dollarTag = null; }
+        continue;
+      }
+      if (quote) {
+        if (ch === quote) {
+          if (next === quote) { i++; continue; }
+          quote = null;
+        } else if (ch === "\\") i++;
+        continue;
+      }
+      if (ch === "-" && next === "-") { lineComment = true; i++; continue; }
+      if (ch === "/" && next === "*") { blockComment = true; i++; continue; }
+      if (ch === "'" || ch === '"' || ch === "`" || ch === "[") {
+        quote = ch === "[" ? "]" : ch;
+        continue;
+      }
+      if (ch === "$") {
+        const match = fullSql.slice(i).match(/^\$[A-Za-z0-9_]*\$/);
+        if (match) { dollarTag = match[0]; i += dollarTag.length - 1; continue; }
+      }
+      if (i === fullSql.length || ch === ";") {
+        const text = fullSql.slice(start, i).trim();
         if (text && SQL_VERBS.test(text)) stmts.push({ text, start, end: i });
         start = i + 1;
       }
@@ -162,12 +193,11 @@ export function QueryPage({
     setRunning(true);
     setBottomTab("results");
     const useScript = isMongo && mongoScriptMode;
-    appendLog("info", useScript ? `Running script` : `Running query`, queryToRun.trim());
-    console.log("[runQuery]", queryToRun.trim());
+    appendLog("info", `${useScript ? "Running script" : "Running query"} (${queryToRun.length} characters)`);
     try {
       const res = useScript
-        ? await invoke<QueryResult>("run_script", { args: { script: queryToRun } })
-        : await invoke<QueryResult>("run_query", { args: { sql: queryToRun } });
+        ? await invoke<QueryResult>("run_script", { args: { script: queryToRun, timeout_ms: timeoutMs } })
+        : await invoke<QueryResult>("run_query", { args: { sql: queryToRun, timeout_ms: timeoutMs } });
       setResult(res);
       if (res.error) appendLog("error", `${useScript ? "Script" : "Query"} error: ${res.error}`);
       else if (useScript || DDL_RE.test(queryToRun)) onRefreshSchema();
@@ -180,7 +210,15 @@ export function QueryPage({
     } finally {
       setRunning(false);
     }
-  }, [running, isMongo, mongoScriptMode]);
+  }, [running, isMongo, mongoScriptMode, timeoutMs]);
+
+  const cancelQuery = useCallback(async () => {
+    try {
+      await invoke<boolean>("cancel_query");
+    } catch (e) {
+      appendLog("error", `Failed to cancel query: ${String(e)}`);
+    }
+  }, []);
 
   const handleInsertSql = (s: string) => {
     if (isMongo) setMongoCmd(s);
@@ -209,6 +247,21 @@ export function QueryPage({
           <div style={{ padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "#e8eaf0", borderBottom: "2px solid #4f8ef7" }}>
             {editorLabel}
           </div>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: "#6b7280" }}>Timeout</span>
+            <select
+              value={timeoutMs}
+              onChange={e => changeTimeout(Number(e.target.value))}
+              disabled={running}
+              style={{ background: "#191c23", border: "1px solid #2a2f3d", borderRadius: 4, color: "#9ca3af", fontSize: 10, padding: "3px 6px" }}
+            >
+              <option value={30_000}>30 sec</option>
+              <option value={60_000}>1 min</option>
+              <option value={120_000}>2 min</option>
+              <option value={300_000}>5 min</option>
+              <option value={0}>No timeout</option>
+            </select>
+          </div>
         </div>
 
         {/* Editor */}
@@ -218,6 +271,7 @@ export function QueryPage({
               value={mongoCmd}
               onChange={handleMongoCmdChange}
               onRun={() => runQuery(mongoCmd)}
+              onCancel={cancelQuery}
               running={running}
               scriptMode={mongoScriptMode}
               onToggleScriptMode={() => setMongoScriptMode(m => !m)}
@@ -228,6 +282,7 @@ export function QueryPage({
               onChange={handleSqlChange}
               onRunAll={() => runQuery(sql)}
               onRunAtCursor={pos => runQuery(getStatementAtCursor(sql, pos))}
+              onCancel={cancelQuery}
               running={running}
             />
           )}
@@ -290,7 +345,7 @@ export function QueryPage({
         <CollapsedLabel label="AI Chat" onClick={onChatToggle} />
       ) : (
         <div style={{ width: chatWidth, flexShrink: 0, overflow: "hidden" }}>
-          <AiChat apiKey={aiKey} providerId={activeAi?.provider_id ?? "gemini"} schemaMetadata={schema} onInsertSql={handleInsertSql} onRunQuery={runQuery} onRefreshSchema={onRefreshSchema} />
+          <AiChat apiKey={aiKey} providerId={activeAi?.provider_id ?? "gemini"} schemaMetadata={schema} schemaLoading={schemaLoading} onInsertSql={handleInsertSql} onRunQuery={runQuery} onRefreshSchema={onRefreshSchema} />
         </div>
       )}
     </div>

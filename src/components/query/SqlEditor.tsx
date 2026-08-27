@@ -7,10 +7,11 @@ interface Props {
   onChange:      (v: string) => void;
   onRunAll:      () => void;
   onRunAtCursor: (cursorPos: number) => void;
+  onCancel:      () => void;
   running:       boolean;
 }
 
-export function SqlEditor({ value, onChange, onRunAll, onRunAtCursor, running }: Props) {
+export function SqlEditor({ value, onChange, onRunAll, onRunAtCursor, onCancel, running }: Props) {
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
 
@@ -77,6 +78,15 @@ export function SqlEditor({ value, onChange, onRunAll, onRunAtCursor, running }:
         </span>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          {running && (
+            <button
+              onClick={onCancel}
+              title="Cancel the running query"
+              style={{ ...btnBase, cursor: "pointer", background: "#450a0a", color: "#f87171", border: "1px solid #7f1d1d" }}
+            >
+              Stop
+            </button>
+          )}
           {/* Open SQL file */}
           <button
             onClick={handleOpenFile}

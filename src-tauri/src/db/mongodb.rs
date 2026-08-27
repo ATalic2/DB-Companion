@@ -6,19 +6,16 @@
 //! output is parsed as JSON.
 
 use super::{
-    build_schema_text, ColumnMeta, DbError, IDatabaseAdapter, SchemaMetadata,
-    StatementOutcome, TableMeta, TransactionResult,
+    build_schema_text, ColumnMeta, DbError, IDatabaseAdapter, SchemaMetadata, StatementOutcome,
+    TableMeta, TransactionResult,
 };
-use async_trait::async_trait;
 use anyhow::Result;
-use zeroize::Zeroizing;
+use async_trait::async_trait;
 use tokio::process::Command;
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+use zeroize::Zeroizing;
 
 pub struct MongoAdapter {
-    uri:     Zeroizing<String>,
+    uri: Zeroizing<String>,
     db_name: String,
 }
 
@@ -26,12 +23,16 @@ impl MongoAdapter {
     pub async fn connect(uri: Zeroizing<String>, db_name: &str) -> Result<Self, DbError> {
         // Verify mongosh is available and can connect
         let out = mongosh_eval(&uri, db_name, "JSON.stringify(db.runCommand({ping:1}))").await?;
-        let val: serde_json::Value = serde_json::from_str(&out)
-            .map_err(|e| DbError::Connection(format!("Unexpected ping response: {e} — got: {out}")))?;
+        let val: serde_json::Value = serde_json::from_str(&out).map_err(|e| {
+            DbError::Connection(format!("Unexpected ping response: {e} — got: {out}"))
+        })?;
         if val.get("ok").and_then(|v| v.as_f64()).unwrap_or(0.0) != 1.0 {
             return Err(DbError::Connection(format!("Ping failed: {out}")));
         }
-        Ok(Self { uri, db_name: db_name.to_string() })
+        Ok(Self {
+            uri,
+            db_name: db_name.to_string(),
+        })
     }
 }
 
@@ -39,22 +40,11 @@ impl MongoAdapter {
 async fn mongosh_eval(uri: &str, _db_name: &str, js: &str) -> Result<String, DbError> {
     // Try mongosh first, fall back to mongo
     for bin in &["mongosh", "mongo"] {
-        let mut cmd = Command::new(bin);
-        cmd.args([
-            uri,
-            "--quiet",
-            "--eval", js,
-        ]);
-
-        // On Windows, prevent a console window from flashing up every time
-        // we shell out to mongosh/mongo.
-        #[cfg(target_os = "windows")]
-        {
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let result = cmd.output().await;
+        let mut command = Command::new(bin);
+        command
+            .kill_on_drop(true)
+            .args([uri, "--quiet", "--eval", js]);
+        let result = command.output().await;
 
         match result {
             Ok(out) => {
@@ -70,7 +60,8 @@ async fn mongosh_eval(uri: &str, _db_name: &str, js: &str) -> Result<String, DbE
         }
     }
     Err(DbError::Connection(
-        "mongosh not found. Please install it from https://www.mongodb.com/try/download/shell".into()
+        "mongosh not found. Please install it from https://www.mongodb.com/try/download/shell"
+            .into(),
     ))
 }
 
@@ -81,19 +72,21 @@ async fn mongosh_json(uri: &str, db_name: &str, js: &str) -> Result<serde_json::
     let start = out.find(|c| c == '{' || c == '[').unwrap_or(0);
     let clean = &out[start..];
     serde_json::from_str(clean)
-        .map_err(|e| DbError::Transaction(format!("Failed to parse mongosh output as JSON: {e}\nOutput was:\n{out}")))
+        .map_err(|e| DbError::Transaction(format!("Failed to parse mongosh output as JSON: {e}")))
 }
 
 #[async_trait]
 impl IDatabaseAdapter for MongoAdapter {
-    fn driver_name(&self) -> &str { "mongodb" }
+    fn driver_name(&self) -> &str {
+        "mongodb"
+    }
 
     async fn get_schema_metadata(&self) -> Result<SchemaMetadata, DbError> {
         // Get collection names
         let js = "JSON.stringify(db.getCollectionNames())";
         let names_val = mongosh_json(&self.uri, &self.db_name, js).await?;
-        let collection_names: Vec<String> = serde_json::from_value(names_val)
-            .map_err(|e| DbError::Schema(e.to_string()))?;
+        let collection_names: Vec<String> =
+            serde_json::from_value(names_val).map_err(|e| DbError::Schema(e.to_string()))?;
 
         let mut tables = Vec::new();
 
@@ -103,10 +96,11 @@ impl IDatabaseAdapter for MongoAdapter {
                 "JSON.stringify(db.getCollection('{}').aggregate([{{$sample:{{size:20}}}}]).toArray())",
                 coll_name.replace('\'', "\\'")
             );
-            let docs_val = mongosh_json(&self.uri, &self.db_name, &js).await
+            let docs_val = mongosh_json(&self.uri, &self.db_name, &js)
+                .await
                 .unwrap_or(serde_json::Value::Array(vec![]));
 
-            let mut seen    = std::collections::HashSet::new();
+            let mut seen = std::collections::HashSet::new();
             let mut columns: Vec<ColumnMeta> = Vec::new();
 
             if let serde_json::Value::Array(docs) = docs_val {
@@ -116,12 +110,12 @@ impl IDatabaseAdapter for MongoAdapter {
                             if seen.insert(key.clone()) {
                                 let is_pk = key == "_id";
                                 columns.push(ColumnMeta {
-                                    name:        key.clone(),
-                                    data_type:   json_type_name(val).to_string(),
-                                    nullable:    !is_pk,
+                                    name: key.clone(),
+                                    data_type: json_type_name(val).to_string(),
+                                    nullable: !is_pk,
                                     is_pk,
-                                    is_fk:       false,
-                                    fk:          None,
+                                    is_fk: false,
+                                    fk: None,
                                     default_val: None,
                                 });
                             }
@@ -139,37 +133,50 @@ impl IDatabaseAdapter for MongoAdapter {
                 "JSON.stringify(db.getCollection('{}').getIndexes())",
                 coll_name.replace('\'', "\\'")
             );
-            let indexes: Vec<super::IndexMeta> = match mongosh_json(&self.uri, &self.db_name, &idx_js).await {
-                Ok(serde_json::Value::Array(specs)) => specs.iter().filter_map(|spec| {
-                    let obj = spec.as_object()?;
-                    let name = obj.get("name")?.as_str()?.to_string();
-                    let key_obj = obj.get("key")?.as_object()?;
-                    let columns: Vec<String> = key_obj.keys().cloned().collect();
-                    let unique = obj.get("unique").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let predicate = obj.get("partialFilterExpression").map(|v| v.to_string());
+            let indexes: Vec<super::IndexMeta> =
+                match mongosh_json(&self.uri, &self.db_name, &idx_js).await {
+                    Ok(serde_json::Value::Array(specs)) => specs
+                        .iter()
+                        .filter_map(|spec| {
+                            let obj = spec.as_object()?;
+                            let name = obj.get("name")?.as_str()?.to_string();
+                            let key_obj = obj.get("key")?.as_object()?;
+                            let columns: Vec<String> = key_obj.keys().cloned().collect();
+                            let unique =
+                                obj.get("unique").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let predicate =
+                                obj.get("partialFilterExpression").map(|v| v.to_string());
 
-                    // Mongo key-spec values reveal special index kinds (text/geo/hashed);
-                    // a plain 1/-1 value is a normal ascending/descending field index.
-                    let special = key_obj.values().find_map(|v| v.as_str());
-                    let index_type = match special {
-                        Some("text")      => "text",
-                        Some("2dsphere")  => "2dsphere",
-                        Some("2d")        => "2d",
-                        Some("hashed")    => "hashed",
-                        _ if columns.len() > 1 => "compound",
-                        _                       => "single",
-                    };
+                            // Mongo key-spec values reveal special index kinds (text/geo/hashed);
+                            // a plain 1/-1 value is a normal ascending/descending field index.
+                            let special = key_obj.values().find_map(|v| v.as_str());
+                            let index_type = match special {
+                                Some("text") => "text",
+                                Some("2dsphere") => "2dsphere",
+                                Some("2d") => "2d",
+                                Some("hashed") => "hashed",
+                                _ if columns.len() > 1 => "compound",
+                                _ => "single",
+                            };
 
-                    Some(super::IndexMeta {
-                        name, columns, unique,
-                        index_type: Some(index_type.to_string()),
-                        predicate,
-                    })
-                }).collect(),
-                _ => vec![], // don't fail the whole schema fetch if index lookup has a hiccup
-            };
+                            Some(super::IndexMeta {
+                                name,
+                                columns,
+                                unique,
+                                index_type: Some(index_type.to_string()),
+                                predicate,
+                            })
+                        })
+                        .collect(),
+                    _ => vec![], // don't fail the whole schema fetch if index lookup has a hiccup
+                };
 
-            tables.push(TableMeta { name: coll_name.clone(), columns, indexes, constraints: vec![] });
+            tables.push(TableMeta {
+                name: coll_name.clone(),
+                columns,
+                indexes,
+                constraints: vec![],
+            });
         }
 
         let schema_text = build_schema_text(&tables, "mongodb");
@@ -184,19 +191,28 @@ impl IDatabaseAdapter for MongoAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run:  bool,
+        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
         if dry_run {
-            let outcomes = commands.iter().map(|cmd| StatementOutcome {
-                sql: cmd.clone(), rows_affected: 0, ok: true, error: None,
-            }).collect();
+            let outcomes = commands
+                .iter()
+                .map(|cmd| StatementOutcome {
+                    sql: cmd.clone(),
+                    rows_affected: 0,
+                    ok: true,
+                    error: None,
+                })
+                .collect();
             return Ok(TransactionResult {
-                success: true, dry_run: true, rows_affected: 0,
-                statements: outcomes, error: None,
+                success: true,
+                dry_run: true,
+                rows_affected: 0,
+                statements: outcomes,
+                error: None,
             });
         }
 
-        let mut outcomes   = Vec::new();
+        let mut outcomes = Vec::new();
         let mut total_rows = 0u64;
 
         for cmd_str in &commands {
@@ -207,63 +223,89 @@ impl IDatabaseAdapter for MongoAdapter {
                     let n = result.get("n").and_then(|v| v.as_u64()).unwrap_or(0);
                     total_rows += n;
                     outcomes.push(StatementOutcome {
-                        sql: cmd_str.clone(), rows_affected: n, ok: true, error: None,
+                        sql: cmd_str.clone(),
+                        rows_affected: n,
+                        ok: true,
+                        error: None,
                     });
                 }
                 Err(e) => {
                     let msg = e.to_string();
                     outcomes.push(StatementOutcome {
-                        sql: cmd_str.clone(), rows_affected: 0, ok: false, error: Some(msg.clone()),
+                        sql: cmd_str.clone(),
+                        rows_affected: 0,
+                        ok: false,
+                        error: Some(msg.clone()),
                     });
                     return Ok(TransactionResult {
-                        success: false, dry_run, rows_affected: total_rows,
-                        statements: outcomes, error: Some(msg),
+                        success: false,
+                        dry_run,
+                        rows_affected: total_rows,
+                        statements: outcomes,
+                        error: Some(msg),
                     });
                 }
             }
         }
 
         Ok(TransactionResult {
-            success: true, dry_run, rows_affected: total_rows,
-            statements: outcomes, error: None,
+            success: true,
+            dry_run,
+            rows_affected: total_rows,
+            statements: outcomes,
+            error: None,
         })
     }
 
     async fn run_query(&self, input: &str) -> Result<crate::commands::query::QueryResult, DbError> {
         // Input can be either a JSON command doc or raw JS expression
         let js = if input.trim_start().starts_with('{') {
-            format!("JSON.stringify(db.runCommand({input}))")
+            format!("(()=>{{const r=db.runCommand({input});if(r?.cursor?.firstBatch?.length>{})r.cursor.firstBatch=r.cursor.firstBatch.slice(0,{});return JSON.stringify(r)}})()", crate::commands::query::ROW_CAP, crate::commands::query::ROW_CAP + 1)
         } else {
             // Raw JS — wrap result in JSON.stringify
-            format!("JSON.stringify({input})")
+            format!("(()=>{{const r=({input});return JSON.stringify(Array.isArray(r)?r.slice(0,{}):r)}})()", crate::commands::query::ROW_CAP + 1)
         };
 
         let result = mongosh_json(&self.uri, &self.db_name, &js).await?;
 
         // If result is an array of documents, expand into rows
         if let serde_json::Value::Array(docs) = &result {
+            let capped = docs.len() > crate::commands::query::ROW_CAP;
+            let docs = &docs[..docs.len().min(crate::commands::query::ROW_CAP)];
             if docs.is_empty() {
                 return Ok(crate::commands::query::QueryResult {
-                    columns: vec![], rows: vec![], rows_affected: 0,
-                    execution_ms: 0, error: None,
-                capped: false,
-            });
+                    columns: vec![],
+                    rows: vec![],
+                    rows_affected: 0,
+                    execution_ms: 0,
+                    error: None,
+                    capped,
+                });
             }
             let columns: Vec<String> = if let serde_json::Value::Object(map) = &docs[0] {
                 map.keys().cloned().collect()
             } else {
                 vec!["value".into()]
             };
-            let rows = docs.iter().map(|doc| {
-                if let serde_json::Value::Object(map) = doc {
-                    columns.iter().map(|k| map.get(k).cloned().unwrap_or(serde_json::Value::Null)).collect()
-                } else {
-                    vec![doc.clone()]
-                }
-            }).collect();
+            let rows = docs
+                .iter()
+                .map(|doc| {
+                    if let serde_json::Value::Object(map) = doc {
+                        columns
+                            .iter()
+                            .map(|k| map.get(k).cloned().unwrap_or(serde_json::Value::Null))
+                            .collect()
+                    } else {
+                        vec![doc.clone()]
+                    }
+                })
+                .collect();
             return Ok(crate::commands::query::QueryResult {
-                columns, rows, rows_affected: docs.len() as u64,
-                execution_ms: 0, error: None,
+                columns,
+                rows,
+                rows_affected: docs.len() as u64,
+                execution_ms: 0,
+                error: None,
                 capped: false,
             });
         }
@@ -273,8 +315,11 @@ impl IDatabaseAdapter for MongoAdapter {
             let columns: Vec<String> = map.keys().cloned().collect();
             let row: Vec<serde_json::Value> = map.values().cloned().collect();
             return Ok(crate::commands::query::QueryResult {
-                columns, rows: vec![row], rows_affected: 1,
-                execution_ms: 0, error: None,
+                columns,
+                rows: vec![row],
+                rows_affected: 1,
+                execution_ms: 0,
+                error: None,
                 capped: false,
             });
         }
@@ -285,8 +330,8 @@ impl IDatabaseAdapter for MongoAdapter {
             rows_affected: 1,
             execution_ms: 0,
             error: None,
-                capped: false,
-            })
+            capped: false,
+        })
     }
 
     async fn run_script(&self, script: &str) -> Result<String, DbError> {
@@ -307,9 +352,12 @@ impl IDatabaseAdapter for MongoAdapter {
         };
 
         if use_re_stripped.trim().is_empty() {
-            return Ok("(nothing to run — script only contained a `use` statement, \
+            return Ok(
+                "(nothing to run — script only contained a `use` statement, \
                         which is unnecessary since the database is already set by \
-                        the connection profile)".to_string());
+                        the connection profile)"
+                    .to_string(),
+            );
         }
 
         // Run the whole script as-is via mongosh; it will print the return
@@ -320,12 +368,17 @@ impl IDatabaseAdapter for MongoAdapter {
 
 fn json_type_name(val: &serde_json::Value) -> &'static str {
     match val {
-        serde_json::Value::Null      => "null",
-        serde_json::Value::Bool(_)   => "bool",
-        serde_json::Value::Number(n) =>
-            if n.is_f64() { "double" } else { "int" },
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(n) => {
+            if n.is_f64() {
+                "double"
+            } else {
+                "int"
+            }
+        }
         serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_)  => "array",
+        serde_json::Value::Array(_) => "array",
         serde_json::Value::Object(_) => "object",
     }
 }

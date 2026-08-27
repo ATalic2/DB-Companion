@@ -4,35 +4,73 @@ use super::{
     build_schema_text, ColumnMeta, DbError, ForeignKeyMeta, IDatabaseAdapter, IndexMeta,
     SchemaMetadata, StatementOutcome, TableConstraint, TableMeta, TransactionResult,
 };
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
+use futures_util::TryStreamExt;
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
-use tokio_util::compat::{TokioAsyncWriteCompatExt, Compat};
+use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 use zeroize::Zeroizing;
 
 pub struct MssqlAdapter {
-    host:     String,
-    port:     u16,
-    user:     String,
+    host: String,
+    port: u16,
+    user: String,
     password: Zeroizing<String>,
-    dbname:   String,
+    dbname: String,
 }
 
 impl MssqlAdapter {
     pub fn new(
-        host: &str, port: &str, user: &str,
-        password: Zeroizing<String>, dbname: &str,
+        host: &str,
+        port: &str,
+        user: &str,
+        password: Zeroizing<String>,
+        dbname: &str,
         _instance: Option<&str>,
     ) -> Result<Self, DbError> {
         let port = port.parse::<u16>().unwrap_or(1433);
         Ok(Self {
-            host:     host.to_string(),
+            host: host.to_string(),
             port,
-            user:     user.to_string(),
+            user: user.to_string(),
             password,
-            dbname:   dbname.to_string(),
+            dbname: dbname.to_string(),
         })
+    }
+
+    pub fn from_connection_string(value: &str) -> Result<Self, DbError> {
+        let values = super::connection_strings::parse_key_value(value)?;
+        let server =
+            super::connection_strings::first_value(&values, &["server", "data source", "host"])
+                .ok_or_else(|| {
+                    DbError::Connection("SQL Server connection string is missing Server".into())
+                })?;
+        let server = server.strip_prefix("tcp:").unwrap_or(&server).to_string();
+        let (host, embedded_port) = server
+            .rsplit_once(',')
+            .map(|(host, port)| (host.to_string(), Some(port.to_string())))
+            .unwrap_or((server, None));
+        let port = embedded_port
+            .or_else(|| super::connection_strings::first_value(&values, &["port"]))
+            .unwrap_or_else(|| "1433".into());
+        let user =
+            super::connection_strings::first_value(&values, &["user id", "username", "user"])
+                .unwrap_or_default();
+        let password = super::connection_strings::first_value(&values, &["password", "pwd"])
+            .unwrap_or_default();
+        let database =
+            super::connection_strings::first_value(&values, &["database", "initial catalog"])
+                .unwrap_or_default();
+
+        Self::new(
+            &host,
+            &port,
+            &user,
+            Zeroizing::new(password),
+            &database,
+            None,
+        )
     }
 
     async fn connect(&self) -> Result<Client<Compat<TcpStream>>, DbError> {
@@ -56,21 +94,27 @@ impl MssqlAdapter {
 
 #[async_trait]
 impl IDatabaseAdapter for MssqlAdapter {
-    fn driver_name(&self) -> &str { "mssql" }
+    fn driver_name(&self) -> &str {
+        "mssql"
+    }
 
     async fn get_schema_metadata(&self) -> Result<SchemaMetadata, DbError> {
         let mut client = self.connect().await?;
 
         // ── Tables ─────────────────────────────────────────────────────────
-        let table_rows = client.simple_query(
-            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES \
-             WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
-        ).await
+        let table_rows = client
+            .simple_query(
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME",
+            )
+            .await
             .map_err(|e| DbError::Schema(e.to_string()))?
-            .into_first_result().await
+            .into_first_result()
+            .await
             .map_err(|e| DbError::Schema(e.to_string()))?;
 
-        let table_names: Vec<String> = table_rows.iter()
+        let table_names: Vec<String> = table_rows
+            .iter()
             .filter_map(|r| r.get::<&str, _>(0).map(|s| s.to_string()))
             .collect();
 
@@ -78,7 +122,8 @@ impl IDatabaseAdapter for MssqlAdapter {
 
         for table_name in &table_names {
             // ── Columns with PK/FK flags ────────────────────────────────────
-            let col_sql = format!("
+            let col_sql = format!(
+                "
                 SELECT
                     c.COLUMN_NAME,
                     c.DATA_TYPE,
@@ -102,15 +147,20 @@ impl IDatabaseAdapter for MssqlAdapter {
                     WHERE tc.CONSTRAINT_TYPE = 'FOREIGN KEY' AND tc.TABLE_NAME = '{table_name}'
                 ) fk ON fk.COLUMN_NAME = c.COLUMN_NAME
                 WHERE c.TABLE_NAME = '{table_name}'
-                ORDER BY c.ORDINAL_POSITION");
+                ORDER BY c.ORDINAL_POSITION"
+            );
 
-            let col_rows = client.simple_query(&col_sql).await
+            let col_rows = client
+                .simple_query(&col_sql)
+                .await
                 .map_err(|e| DbError::Schema(e.to_string()))?
-                .into_first_result().await
+                .into_first_result()
+                .await
                 .map_err(|e| DbError::Schema(e.to_string()))?;
 
             // ── FK details via sys catalog ──────────────────────────────────
-            let fk_sql = format!("
+            let fk_sql = format!(
+                "
                 SELECT
                     fk.name                     AS constraint_name,
                     col.name                    AS from_col,
@@ -127,42 +177,51 @@ impl IDatabaseAdapter for MssqlAdapter {
                 JOIN sys.tables   ref_tab ON fk.referenced_object_id = ref_tab.object_id
                 JOIN sys.columns  ref_col ON fkc.referenced_object_id = ref_col.object_id
                                           AND fkc.referenced_column_id = ref_col.column_id
-                WHERE tab.name = '{table_name}'");
+                WHERE tab.name = '{table_name}'"
+            );
 
-            let fk_rows = client.simple_query(&fk_sql).await
+            let fk_rows = client
+                .simple_query(&fk_sql)
+                .await
                 .map_err(|e| DbError::Schema(e.to_string()))?
-                .into_first_result().await
+                .into_first_result()
+                .await
                 .map_err(|e| DbError::Schema(e.to_string()))?;
 
-            let columns: Vec<ColumnMeta> = col_rows.iter().map(|r| {
-                let col_name = r.get::<&str, _>(0).unwrap_or("").to_string();
-                let is_fk    = r.get::<i32, _>(5).unwrap_or(0) == 1;
-                let fk = if is_fk {
-                    fk_rows.iter().find(|fr| {
-                        fr.get::<&str, _>(1).unwrap_or("") == col_name.as_str()
-                    }).map(|fr| ForeignKeyMeta {
-                        constraint_name: fr.get::<&str, _>(0).unwrap_or("").to_string(),
-                        ref_table:       fr.get::<&str, _>(2).unwrap_or("").to_string(),
-                        ref_column:      fr.get::<&str, _>(3).unwrap_or("").to_string(),
-                        on_delete:       fr.get::<&str, _>(4).unwrap_or("NO_ACTION").to_string(),
-                        on_update:       fr.get::<&str, _>(5).unwrap_or("NO_ACTION").to_string(),
-                    })
-                } else {
-                    None
-                };
-                ColumnMeta {
-                    name:        col_name,
-                    data_type:   r.get::<&str, _>(1).unwrap_or("").to_string(),
-                    nullable:    r.get::<&str, _>(2).unwrap_or("YES") == "YES",
-                    default_val: r.get::<&str, _>(3).map(|s| s.to_string()),
-                    is_pk:       r.get::<i32, _>(4).unwrap_or(0) == 1,
-                    is_fk,
-                    fk,
-                }
-            }).collect();
+            let columns: Vec<ColumnMeta> = col_rows
+                .iter()
+                .map(|r| {
+                    let col_name = r.get::<&str, _>(0).unwrap_or("").to_string();
+                    let is_fk = r.get::<i32, _>(5).unwrap_or(0) == 1;
+                    let fk = if is_fk {
+                        fk_rows
+                            .iter()
+                            .find(|fr| fr.get::<&str, _>(1).unwrap_or("") == col_name.as_str())
+                            .map(|fr| ForeignKeyMeta {
+                                constraint_name: fr.get::<&str, _>(0).unwrap_or("").to_string(),
+                                ref_table: fr.get::<&str, _>(2).unwrap_or("").to_string(),
+                                ref_column: fr.get::<&str, _>(3).unwrap_or("").to_string(),
+                                on_delete: fr.get::<&str, _>(4).unwrap_or("NO_ACTION").to_string(),
+                                on_update: fr.get::<&str, _>(5).unwrap_or("NO_ACTION").to_string(),
+                            })
+                    } else {
+                        None
+                    };
+                    ColumnMeta {
+                        name: col_name,
+                        data_type: r.get::<&str, _>(1).unwrap_or("").to_string(),
+                        nullable: r.get::<&str, _>(2).unwrap_or("YES") == "YES",
+                        default_val: r.get::<&str, _>(3).map(|s| s.to_string()),
+                        is_pk: r.get::<i32, _>(4).unwrap_or(0) == 1,
+                        is_fk,
+                        fk,
+                    }
+                })
+                .collect();
 
             // ── Table-level constraints: CHECK and multi-col UNIQUE ─────────
-            let con_sql = format!("
+            let con_sql = format!(
+                "
                 SELECT
                     tc.CONSTRAINT_NAME,
                     tc.CONSTRAINT_TYPE,
@@ -183,18 +242,25 @@ impl IDatabaseAdapter for MssqlAdapter {
                   ON tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
                 WHERE tc.TABLE_NAME      = '{table_name}'
                   AND tc.CONSTRAINT_TYPE IN ('CHECK', 'UNIQUE')
-                ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME");
+                ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME"
+            );
 
-            let con_rows = client.simple_query(&con_sql).await
+            let con_rows = client
+                .simple_query(&con_sql)
+                .await
                 .map_err(|e| DbError::Schema(e.to_string()))?
-                .into_first_result().await
+                .into_first_result()
+                .await
                 .map_err(|e| DbError::Schema(e.to_string()))?;
 
-            let constraints: Vec<TableConstraint> = con_rows.iter().map(|r| TableConstraint {
-                name:            r.get::<&str, _>(0).unwrap_or("").to_string(),
-                constraint_type: r.get::<&str, _>(1).unwrap_or("").to_string(),
-                definition:      r.get::<&str, _>(2).unwrap_or("").to_string(),
-            }).collect();
+            let constraints: Vec<TableConstraint> = con_rows
+                .iter()
+                .map(|r| TableConstraint {
+                    name: r.get::<&str, _>(0).unwrap_or("").to_string(),
+                    constraint_type: r.get::<&str, _>(1).unwrap_or("").to_string(),
+                    definition: r.get::<&str, _>(2).unwrap_or("").to_string(),
+                })
+                .collect();
 
             // ── Indexes ────────────────────────────────────────────────────
             let idx_sql = format!("
@@ -210,25 +276,40 @@ impl IDatabaseAdapter for MssqlAdapter {
                 WHERE t.name = '{table_name}' AND i.is_primary_key = 0
                 GROUP BY i.name, i.is_unique, i.type_desc");
 
-            let idx_rows = client.simple_query(&idx_sql).await
+            let idx_rows = client
+                .simple_query(&idx_sql)
+                .await
                 .map_err(|e| DbError::Schema(e.to_string()))?
-                .into_first_result().await
+                .into_first_result()
+                .await
                 .map_err(|e| DbError::Schema(e.to_string()))?;
 
-            let indexes: Vec<IndexMeta> = idx_rows.iter().map(|r| {
-                // e.g. CLUSTERED / NONCLUSTERED / XML / SPATIAL / NONCLUSTERED COLUMNSTORE / NONCLUSTERED HASH
-                let raw_type = r.get::<&str, _>(2).unwrap_or("NONCLUSTERED");
-                IndexMeta {
-                    name:       r.get::<&str, _>(0).unwrap_or("").to_string(),
-                    unique:     r.get::<bool, _>(1).unwrap_or(false),
-                    columns:    r.get::<&str, _>(3).unwrap_or("").split(',')
-                                  .map(|s| s.to_string()).collect(),
-                    index_type: Some(raw_type.to_lowercase().replace(' ', "_")),
-                    predicate:  None,
-                }
-            }).collect();
+            let indexes: Vec<IndexMeta> = idx_rows
+                .iter()
+                .map(|r| {
+                    // e.g. CLUSTERED / NONCLUSTERED / XML / SPATIAL / NONCLUSTERED COLUMNSTORE / NONCLUSTERED HASH
+                    let raw_type = r.get::<&str, _>(2).unwrap_or("NONCLUSTERED");
+                    IndexMeta {
+                        name: r.get::<&str, _>(0).unwrap_or("").to_string(),
+                        unique: r.get::<bool, _>(1).unwrap_or(false),
+                        columns: r
+                            .get::<&str, _>(3)
+                            .unwrap_or("")
+                            .split(',')
+                            .map(|s| s.to_string())
+                            .collect(),
+                        index_type: Some(raw_type.to_lowercase().replace(' ', "_")),
+                        predicate: None,
+                    }
+                })
+                .collect();
 
-            tables.push(TableMeta { name: table_name.clone(), columns, indexes, constraints });
+            tables.push(TableMeta {
+                name: table_name.clone(),
+                columns,
+                indexes,
+                constraints,
+            });
         }
 
         let schema_text = build_schema_text(&tables, "mssql");
@@ -243,56 +324,69 @@ impl IDatabaseAdapter for MssqlAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run:  bool,
+        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
         let mut client = self.connect().await?;
-        let mut outcomes   = Vec::new();
+        let mut outcomes = Vec::new();
         let mut total_rows = 0u64;
 
-        client.simple_query("BEGIN TRANSACTION").await
+        client
+            .simple_query("BEGIN TRANSACTION")
+            .await
             .map_err(|e| DbError::Transaction(e.to_string()))?;
 
-        for raw in &commands {
-            let stmts: Vec<&str> = raw.split(';')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-
-            for sql in stmts {
-                match client.execute(sql, &[]).await {
-                    Ok(r) => {
-                        let affected = r.rows_affected().iter().sum::<u64>();
-                        total_rows += affected;
-                        outcomes.push(StatementOutcome {
-                            sql: sql.to_string(), rows_affected: affected, ok: true, error: None,
-                        });
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        outcomes.push(StatementOutcome {
-                            sql: sql.to_string(), rows_affected: 0, ok: false, error: Some(msg.clone()),
-                        });
-                        client.simple_query("ROLLBACK TRANSACTION").await.ok();
-                        return Ok(TransactionResult {
-                            success: false, dry_run, rows_affected: total_rows,
-                            statements: outcomes, error: Some(msg),
-                        });
-                    }
+        // Each planned command is a SQL Server batch. Submitting it intact is
+        // essential for procedure/trigger bodies containing semicolons.
+        for sql in &commands {
+            match client.execute(sql, &[]).await {
+                Ok(r) => {
+                    let affected = r.rows_affected().iter().sum::<u64>();
+                    total_rows += affected;
+                    outcomes.push(StatementOutcome {
+                        sql: sql.to_string(),
+                        rows_affected: affected,
+                        ok: true,
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    outcomes.push(StatementOutcome {
+                        sql: sql.to_string(),
+                        rows_affected: 0,
+                        ok: false,
+                        error: Some(msg.clone()),
+                    });
+                    client.simple_query("ROLLBACK TRANSACTION").await.ok();
+                    return Ok(TransactionResult {
+                        success: false,
+                        dry_run,
+                        rows_affected: total_rows,
+                        statements: outcomes,
+                        error: Some(msg),
+                    });
                 }
             }
         }
 
         if dry_run {
-            client.simple_query("ROLLBACK TRANSACTION").await
+            client
+                .simple_query("ROLLBACK TRANSACTION")
+                .await
                 .map_err(|e| DbError::Rollback(e.to_string()))?;
         } else {
-            client.simple_query("COMMIT TRANSACTION").await
+            client
+                .simple_query("COMMIT TRANSACTION")
+                .await
                 .map_err(|e| DbError::Transaction(e.to_string()))?;
         }
 
         Ok(TransactionResult {
-            success: true, dry_run, rows_affected: total_rows,
-            statements: outcomes, error: None,
+            success: true,
+            dry_run,
+            rows_affected: total_rows,
+            statements: outcomes,
+            error: None,
         })
     }
 
@@ -301,35 +395,49 @@ impl IDatabaseAdapter for MssqlAdapter {
 
         match rows_result {
             Ok(rows) => {
+                let capped = rows.len() > crate::commands::query::ROW_CAP;
+                let mut rows = rows;
+                rows.truncate(crate::commands::query::ROW_CAP);
                 if rows.is_empty() {
                     return Ok(crate::commands::query::QueryResult {
-                        columns: vec![], rows: vec![], rows_affected: 0,
-                        execution_ms: 0, error: None,
-                capped: false,
-            });
+                        columns: vec![],
+                        rows: vec![],
+                        rows_affected: 0,
+                        execution_ms: 0,
+                        error: None,
+                        capped,
+                    });
                 }
 
-                let columns: Vec<String> = rows[0].columns().iter()
-                    .map(|c| c.name().to_string()).collect();
+                let columns: Vec<String> = rows[0]
+                    .columns()
+                    .iter()
+                    .map(|c| c.name().to_string())
+                    .collect();
 
-                let result_rows = rows.iter().map(|row| {
-                    (0..columns.len()).map(|i| {
-                        if let Some(v) = row.get::<i64, _>(i) {
-                            return serde_json::Value::Number(v.into());
-                        }
-                        if let Some(v) = row.get::<f64, _>(i) {
-                            return serde_json::Number::from_f64(v)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or(serde_json::Value::Null);
-                        }
-                        if let Some(v) = row.get::<bool, _>(i) {
-                            return serde_json::Value::Bool(v);
-                        }
-                        row.get::<&str, _>(i)
-                            .map(|s| serde_json::Value::String(s.to_string()))
-                            .unwrap_or(serde_json::Value::Null)
-                    }).collect::<Vec<_>>()
-                }).collect();
+                let result_rows = rows
+                    .iter()
+                    .map(|row| {
+                        (0..columns.len())
+                            .map(|i| {
+                                if let Some(v) = row.get::<i64, _>(i) {
+                                    return serde_json::Value::Number(v.into());
+                                }
+                                if let Some(v) = row.get::<f64, _>(i) {
+                                    return serde_json::Number::from_f64(v)
+                                        .map(serde_json::Value::Number)
+                                        .unwrap_or(serde_json::Value::Null);
+                                }
+                                if let Some(v) = row.get::<bool, _>(i) {
+                                    return serde_json::Value::Bool(v);
+                                }
+                                row.get::<&str, _>(i)
+                                    .map(|s| serde_json::Value::String(s.to_string()))
+                                    .unwrap_or(serde_json::Value::Null)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
 
                 Ok(crate::commands::query::QueryResult {
                     columns,
@@ -337,20 +445,27 @@ impl IDatabaseAdapter for MssqlAdapter {
                     rows_affected: rows.len() as u64,
                     execution_ms: 0,
                     error: None,
-                capped: false,
-            })
+                    capped,
+                })
             }
             Err(_) => {
                 let mut client = self.connect().await?;
-                let affected = client.execute(sql, &[]).await
+                let affected = client
+                    .execute(sql, &[])
+                    .await
                     .map_err(|e| DbError::Transaction(e.to_string()))?
-                    .rows_affected().iter().sum::<u64>();
+                    .rows_affected()
+                    .iter()
+                    .sum::<u64>();
 
                 Ok(crate::commands::query::QueryResult {
-                    columns: vec![], rows: vec![],
-                    rows_affected: affected, execution_ms: 0, error: None,
-                capped: false,
-            })
+                    columns: vec![],
+                    rows: vec![],
+                    rows_affected: affected,
+                    execution_ms: 0,
+                    error: None,
+                    capped: false,
+                })
             }
         }
     }
@@ -359,10 +474,22 @@ impl IDatabaseAdapter for MssqlAdapter {
 impl MssqlAdapter {
     async fn fetch_rows(&self, sql: &str) -> Result<Vec<tiberius::Row>, DbError> {
         let mut client = self.connect().await?;
-        let rows = client.simple_query(sql).await
-            .map_err(|e| DbError::Transaction(e.to_string()))?
-            .into_first_result().await
+        let query = client
+            .simple_query(sql)
+            .await
             .map_err(|e| DbError::Transaction(e.to_string()))?;
+        let mut stream = query.into_row_stream();
+        let mut rows = Vec::new();
+        while rows.len() <= crate::commands::query::ROW_CAP {
+            match stream
+                .try_next()
+                .await
+                .map_err(|e| DbError::Transaction(e.to_string()))?
+            {
+                Some(row) => rows.push(row),
+                None => break,
+            }
+        }
         Ok(rows)
     }
 }
