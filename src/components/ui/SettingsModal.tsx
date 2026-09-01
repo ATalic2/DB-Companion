@@ -1,5 +1,6 @@
 // src/components/ui/SettingsModal.tsx
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { DbProfile, AiProfile, DbType } from "../../hooks/useCredentialStore";
@@ -549,6 +550,12 @@ export function AiKeysModal({ aiProfiles, onAddAi, onDeleteAi, onClose }: {
 
 // ── About Modal ───────────────────────────────────────────────────────────────
 export function AboutModal({ onClose }: { onClose: () => void }) {
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion("unknown"));
+  }, []);
+
   return (
     <ModalShell title="ℹ About DbCompanion" onClose={onClose}>
       <div style={{ fontSize: 13, color: "#9ca3af", lineHeight: 1.8, display: "flex", flexDirection: "column", gap: 16 }}>
@@ -556,7 +563,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>About</div>
           <div>DbCompanion is an AI-powered database change agent built with Tauri v2 and Rust. Describe a schema change in plain English, review the AI-generated change plan, dry-run it, and execute it with a single click.</div>
-          <div style={{ marginTop: 6, fontFamily: "monospace", fontSize: 11, color: "#4f8ef7" }}>v0.1.0 · Tauri 2 · Rust</div>
+          <div style={{ marginTop: 6, fontFamily: "monospace", fontSize: 11, color: "#4f8ef7" }}>v{appVersion || "…"} · Tauri 2 · Rust</div>
         </div>
 
         <div style={{ borderTop: "1px solid #2a2f3d", paddingTop: 16 }}>

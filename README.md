@@ -32,6 +32,21 @@ npm run tauri:build    # build a release binary
 
 On first launch, add a database connection and a Gemini or OpenAI API key from **Settings**.
 
+## Releasing
+
+Push a semantic version tag to build and publish that version on every platform:
+
+```bash
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+The release workflow derives `0.4.0` from the tag, synchronizes the package and
+Cargo metadata inside the CI runner, and passes a generated version override to
+Tauri. These generated changes are used for the release build and are not
+committed back to the repository. Manual workflow runs accept the version as an
+input. The About screen reads the packaged Tauri version at runtime.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).

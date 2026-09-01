@@ -45,3 +45,4 @@ logs/
 # ---- Misc build artifacts ----
 *.tsbuildinfo
 coverage/
+src-tauri/tauri.release.conf.json

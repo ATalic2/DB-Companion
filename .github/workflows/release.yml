@@ -1,14 +1,19 @@
 name: Release
 
 # Triggers whenever you push a version tag, e.g.:
-#   git tag v0.1.0
-#   git push origin v0.1.0
+#   git tag v0.3.0
+#   git push origin v0.3.0
 on:
   push:
     tags:
       - "v*"
-  # Lets you trigger a build manually from the Actions tab without needing a tag.
+  # Manual releases use the same version pipeline as pushed tags.
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example 0.4.0 or v0.4.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write # needed so the workflow can create the GitHub Release and upload assets
@@ -38,6 +43,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Prepare version from tag
+        id: release_version
+        env:
+          RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: node scripts/prepare-release.mjs
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -71,10 +82,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "DbCompanion ${{ github.ref_name }}"
+          tagName: ${{ steps.release_version.outputs.tag }}
+          releaseName: "DbCompanion v__VERSION__"
           releaseBody: |
             See the changelog for details on what's new in this release.
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
