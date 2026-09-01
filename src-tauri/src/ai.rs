@@ -3,6 +3,7 @@
 //! Adding a new provider = new file + impl IAiProvider. Nothing else changes.
 
 pub mod gemini;
+pub mod openai;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -76,6 +77,13 @@ pub trait IAiProvider: Send + Sync {
     /// Static metadata about this provider.
     fn info(&self) -> ProviderInfo;
 
+    /// Provider-specific guidance appended after the shared database system
+    /// prompt. Keep cross-provider behavior in the shared prompt and use this
+    /// only for differences in how a provider follows that contract.
+    fn additional_system_instructions(&self) -> &'static str {
+        ""
+    }
+
     /// Generate a structured change plan from a natural-language intent
     /// and a schema description string.
     async fn plan_changes(
@@ -125,7 +133,7 @@ pub trait IAiProvider: Send + Sync {
 pub fn registered_providers() -> Vec<ProviderInfo> {
     vec![
         gemini::GeminiProvider.info(),
-        // openai::OpenAiProvider.info(),      ← uncomment when implemented
+        openai::OpenAiProvider.info(),
         // anthropic::AnthropicProvider.info(), ← uncomment when implemented
         // ollama::OllamaProvider.info(),        ← uncomment when implemented
     ]
@@ -136,7 +144,7 @@ pub fn registered_providers() -> Vec<ProviderInfo> {
 pub fn get_provider(provider_id: &str) -> Option<Box<dyn IAiProvider>> {
     match provider_id {
         "gemini" => Some(Box::new(gemini::GeminiProvider)),
-        // "openai"    => Some(Box::new(openai::OpenAiProvider)),
+        "openai" => Some(Box::new(openai::OpenAiProvider)),
         // "anthropic" => Some(Box::new(anthropic::AnthropicProvider)),
         // "ollama"    => Some(Box::new(ollama::OllamaProvider)),
         _ => None,

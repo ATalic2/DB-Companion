@@ -201,6 +201,12 @@ impl IAiProvider for GeminiProvider {
         }
     }
 
+    fn additional_system_instructions(&self) -> &'static str {
+        r#"=== GEMINI-SPECIFIC INSTRUCTIONS ===
+Follow the response mode contract in the shared instructions exactly. For a plan, keep every runnable command in plan.steps and keep the accompanying message concise.
+=== END GEMINI-SPECIFIC INSTRUCTIONS ==="#
+    }
+
     async fn plan_changes(
         &self,
         credentials: &ProviderCredentials,

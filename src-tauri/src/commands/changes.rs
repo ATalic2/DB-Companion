@@ -274,7 +274,7 @@ fn db_specific_instructions(db_type: &str) -> String {
     }
 }
 
-fn chat_system_prompt(schema_text: &str, db_type: &str) -> String {
+fn chat_system_prompt(schema_text: &str, db_type: &str, provider_instructions: &str) -> String {
     let is_mongo = db_type == "mongodb";
 
     let db_description = match db_type {
@@ -334,6 +334,12 @@ IMPORTANT: Always schema-qualify table names in SQL (e.g. public.airlines, not j
          - Propose a schema design from scratch"
     };
 
+    let provider_section = if provider_instructions.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{provider_instructions}")
+    };
+
     format!(
         "You are an expert database assistant.\n\n\
          === CONNECTED DATABASE ===\n\
@@ -357,7 +363,7 @@ IMPORTANT: Always schema-qualify table names in SQL (e.g. public.airlines, not j
          Only use MODE 2 (PLAN) when you actually need to read or write data/documents, or\n\
          when the user asks about something not covered by the schema summary above.\n\
          {{\"response_type\":\"answer\",\"message\":\"Your reply here.\"}}\n\n\
-         {mode2}\n\n\
+         {mode2}{provider_section}\n\n\
          Note: conversation history is limited to {max_history} messages.",
         db_description = db_description,
         schema_text    = schema_text,
@@ -365,6 +371,7 @@ IMPORTANT: Always schema-qualify table names in SQL (e.g. public.airlines, not j
         db_specific    = db_specific_instructions(db_type),
         empty_help     = empty_help,
         mode2          = mode2,
+        provider_section = provider_section,
         max_history    = MAX_HISTORY,
     )
 }
@@ -426,7 +433,11 @@ pub async fn ai_chat(args: ChatArgs, state: State<'_, AppState>) -> Result<ChatR
         model: args.model,
     };
 
-    let system = chat_system_prompt(&schema_text, &db_type);
+    let system = chat_system_prompt(
+        &schema_text,
+        &db_type,
+        provider.additional_system_instructions(),
+    );
 
     // Get raw reply from provider
     let raw = provider
@@ -498,7 +509,11 @@ pub async fn ai_chat_stream(
         model: args.model.clone(),
     };
 
-    let system = chat_system_prompt(&schema_text, &db_type);
+    let system = chat_system_prompt(
+        &schema_text,
+        &db_type,
+        provider.additional_system_instructions(),
+    );
 
     let win = window.clone();
     let log_win = window.clone();
@@ -716,4 +731,19 @@ pub async fn execute_changes(
 #[tauri::command]
 pub fn list_ai_providers() -> Vec<crate::ai::ProviderInfo> {
     crate::ai::registered_providers()
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::chat_system_prompt;
+
+    #[test]
+    fn provider_instructions_are_appended_after_the_shared_prompt() {
+        let marker = "=== TEST-PROVIDER-SPECIFIC INSTRUCTIONS ===";
+        let prompt = chat_system_prompt("public.users(id)", "postgresql", marker);
+
+        assert!(prompt.contains("=== LIVE DATABASE SCHEMA ==="));
+        assert!(prompt.contains(marker));
+        assert!(prompt.find(marker) > prompt.find("--- MODE 2: PLAN ---"));
+    }
 }

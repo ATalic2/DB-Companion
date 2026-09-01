@@ -145,11 +145,22 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
 
       {/* Grid */}
       <div style={{ flex: 1, overflow: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "monospace", fontSize: 12 }}>
+        <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse", fontFamily: "monospace", fontSize: 12 }}>
           <thead>
-            <tr style={{ position: "sticky", top: 0, background: "#111318", zIndex: 1 }}>
-              {columns.map(col => (
-                <th key={col} style={{ padding: "6px 12px", textAlign: "left", borderBottom: "1px solid #2a2f3d", color: "#6b7280", fontWeight: 600, fontSize: 11, whiteSpace: "nowrap" }}>
+            <tr style={{ position: "sticky", top: 0, background: "#171a21", zIndex: 1, boxShadow: "0 1px 0 #394150" }}>
+              {columns.map((col, ci) => (
+                <th key={`${col}-${ci}`} style={{
+                  minWidth: 120,
+                  padding: "8px 12px",
+                  textAlign: "left",
+                  borderRight: ci < columns.length - 1 ? "1px solid #303644" : "none",
+                  borderBottom: "1px solid #394150",
+                  color: "#aeb6c5",
+                  fontWeight: 700,
+                  fontSize: 11,
+                  letterSpacing: "0.02em",
+                  whiteSpace: "nowrap",
+                }}>
                   {col}
                 </th>
               ))}
@@ -157,12 +168,24 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
           </thead>
           <tbody>
             {rows.map((row, ri) => (
-              <tr key={ri} style={{ borderBottom: "1px solid #1a1f2e" }}
-                onMouseEnter={e => (e.currentTarget.style.background = "#191c23")}
-                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              <tr key={ri} style={{
+                borderBottom: "1px solid #242a36",
+                background: ri % 2 === 0 ? "#0d0f14" : "#11141a",
+              }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#1a202b")}
+                onMouseLeave={e => (e.currentTarget.style.background = ri % 2 === 0 ? "#0d0f14" : "#11141a")}
               >
                 {row.map((cell, ci) => (
-                  <td key={ci} style={{ padding: "5px 12px", color: cell === null ? "#4b5563" : "#e8eaf0", whiteSpace: "nowrap", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <td key={ci} title={cell === null ? "NULL" : String(cell)} style={{
+                    minWidth: 120,
+                    padding: "7px 12px",
+                    borderRight: ci < columns.length - 1 ? "1px solid #242a36" : "none",
+                    color: cell === null ? "#596273" : "#e8eaf0",
+                    whiteSpace: "nowrap",
+                    maxWidth: 300,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}>
                     {cell === null ? "NULL" : String(cell)}
                   </td>
                 ))}

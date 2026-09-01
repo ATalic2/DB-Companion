@@ -30,7 +30,7 @@ npm run tauri:dev      # run in development
 npm run tauri:build    # build a release binary
 ```
 
-On first launch, add a database connection and an AI provider key (currently Gemini) from **Settings**.
+On first launch, add a database connection and a Gemini or OpenAI API key from **Settings**.
 
 ## License
 

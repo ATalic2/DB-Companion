@@ -287,7 +287,7 @@ function DbForm({ onSave, onCancel }: {
 // ── AI provider definitions ───────────────────────────────────────────────────
 export const AI_PROVIDERS = [
   { id: "gemini",    label: "Google Gemini",    available: true,  models: ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"], keyLabel: "Gemini API Key",    keyPlaceholder: "Paste your Gemini API key here", keyHint: "aistudio.google.com",       keyHintUrl: "https://aistudio.google.com/apikey" },
-  { id: "openai",    label: "OpenAI",           available: false, models: ["gpt-4o", "gpt-4o-mini", "o3-mini"],                   keyLabel: "OpenAI API Key",    keyPlaceholder: "sk-...",                         keyHint: "platform.openai.com",       keyHintUrl: "https://platform.openai.com/api-keys" },
+  { id: "openai",    label: "OpenAI",           available: true,  models: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano"],            keyLabel: "OpenAI API Key",    keyPlaceholder: "sk-...",                         keyHint: "platform.openai.com",       keyHintUrl: "https://platform.openai.com/api-keys" },
   { id: "anthropic", label: "Anthropic Claude", available: false, models: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"], keyLabel: "Anthropic API Key", keyPlaceholder: "sk-ant-...",                    keyHint: "console.anthropic.com",     keyHintUrl: "https://console.anthropic.com/settings/keys" },
   { id: "ollama",    label: "Ollama (local)",   available: false, models: ["llama3.3", "mistral", "codellama", "qwen2.5-coder"],                          keyLabel: "Base URL",          keyPlaceholder: "http://localhost:11434",         keyHint: "ollama.com",                keyHintUrl: "https://ollama.com" },
 ];
