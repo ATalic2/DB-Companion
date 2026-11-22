@@ -25,12 +25,12 @@ futures-util            = "0.3"
 serde                   = { version = "1", features = ["derive"] }
 serde_json              = { version = "1", features = ["preserve_order"] }
 tokio                   = { version = "1", features = ["full"] }
-sqlx                    = { version = "0.8", features = [
+sqlx                    = { version = "0.8.6", features = [
                               "runtime-tokio", "tls-rustls",
                               "postgres", "mysql",
                               "uuid", "chrono"
                           ] }
-rusqlite                = { version = "0.31", features = ["bundled"] }
+rusqlite                = { version = "0.32", features = ["bundled"] }
 reqwest                 = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 anyhow                  = "1"
 thiserror               = "1"
