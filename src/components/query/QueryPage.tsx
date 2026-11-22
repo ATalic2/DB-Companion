@@ -21,6 +21,7 @@ interface QueryResult {
 }
 
 interface Props {
+  connectionId: string;
   schema:          SchemaMetadata | null;
   schemaLoading:   boolean;
   onRefreshSchema: () => void;
@@ -40,7 +41,7 @@ function CollapsedLabel({ label, onClick }: { label: string; onClick: () => void
       onMouseEnter={e => (e.currentTarget.style.background = "#191c23")}
       onMouseLeave={e => (e.currentTarget.style.background = "#0d0f14")}
     >
-      <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 2, writingMode: "vertical-rl", userSelect: "none" }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 2, writingMode: "vertical-rl", userSelect: "none" }}>{label}</span>
     </div>
   );
 }
@@ -52,7 +53,7 @@ function DragHandle({ onMouseDown, collapsed, onToggle, label }: { onMouseDown: 
       <div onMouseDown={!collapsed ? onMouseDown : undefined} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
         style={{ width: 5, height: "100%", cursor: collapsed ? "default" : "col-resize", background: hover && !collapsed ? "#2a2f3d" : "#1a1f2e", transition: "background .15s" }} />
       <button onClick={onToggle} title={collapsed ? `Expand ${label}` : `Collapse ${label}`}
-        style={{ position: "absolute", top: "50%", transform: "translateY(-50%)", background: "#191c23", border: "1px solid #2a2f3d", borderRadius: 4, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", color: "#6b7280", fontSize: 11, cursor: "pointer", padding: 0, lineHeight: 1 }}>
+        style={{ position: "absolute", top: "50%", transform: "translateY(-50%)", background: "#191c23", border: "1px solid #2a2f3d", borderRadius: 4, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", color: "#6b7280", fontSize: 13, cursor: "pointer", padding: 0, lineHeight: 1 }}>
         {collapsed ? "‹" : "›"}
       </button>
     </div>
@@ -64,7 +65,7 @@ const MONGO_STORAGE_KEY = "dbcompanion_editor_mongo";
 const QUERY_TIMEOUT_KEY = "dbcompanion_query_timeout_ms";
 
 export function QueryPage({
-  schema, schemaLoading, onRefreshSchema,
+  connectionId, schema, schemaLoading, onRefreshSchema,
   activeAi, getAiKey,
   chatWidth, chatCollapsed, onChatDragStart, onChatToggle,
 }: Props) {
@@ -225,6 +226,27 @@ export function QueryPage({
     else setSql(s);
   };
 
+  const handleAppendQuery = (query: string) => {
+    const append = (current: string) => {
+      const command = query.trim();
+      return current.trim() ? `${current.trimEnd()}\n\n${command}` : command;
+    };
+
+    if (isMongo) {
+      setMongoCmd(current => {
+        const next = append(current);
+        try { localStorage.setItem(MONGO_STORAGE_KEY, next); } catch {}
+        return next;
+      });
+    } else {
+      setSql(current => {
+        const next = append(current);
+        try { localStorage.setItem(SQL_STORAGE_KEY, next); } catch {}
+        return next;
+      });
+    }
+  };
+
   const VertDragHandle = () => {
     const [hover, setHover] = useState(false);
     return (
@@ -244,16 +266,16 @@ export function QueryPage({
 
         {/* Top bar */}
         <div style={{ display: "flex", borderBottom: "1px solid #2a2f3d", background: "#111318", flexShrink: 0, alignItems: "center", padding: "0 12px 0 0" }}>
-          <div style={{ padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "#e8eaf0", borderBottom: "2px solid #4f8ef7" }}>
+          <div style={{ padding: "10px 16px", fontSize: 14, fontWeight: 600, color: "#e8eaf0", borderBottom: "2px solid #4f8ef7" }}>
             {editorLabel}
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 10, color: "#6b7280" }}>Timeout</span>
+            <span style={{ fontSize: 12, color: "#6b7280" }}>Timeout</span>
             <select
               value={timeoutMs}
               onChange={e => changeTimeout(Number(e.target.value))}
               disabled={running}
-              style={{ background: "#191c23", border: "1px solid #2a2f3d", borderRadius: 4, color: "#9ca3af", fontSize: 10, padding: "3px 6px" }}
+              style={{ background: "#191c23", border: "1px solid #2a2f3d", borderRadius: 4, color: "#9ca3af", fontSize: 12, padding: "3px 6px" }}
             >
               <option value={30_000}>30 sec</option>
               <option value={60_000}>1 min</option>
@@ -298,7 +320,7 @@ export function QueryPage({
                 background: "none", border: "none",
                 borderBottom: `2px solid ${bottomTab === tab ? "#4f8ef7" : "transparent"}`,
                 color: bottomTab === tab ? "#e8eaf0" : "#6b7280",
-                padding: "7px 14px", fontSize: 11, fontFamily: "inherit",
+                padding: "7px 14px", fontSize: 13, fontFamily: "inherit",
                 cursor: "pointer", fontWeight: bottomTab === tab ? 600 : 400,
               }}>
                 {tab === "results" ? resultsLabel : "Console"}
@@ -324,8 +346,8 @@ export function QueryPage({
                 )
               ) : (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", flexDirection: "column", gap: 6 }}>
-                  <span style={{ color: "#4b5563", fontSize: 12, fontFamily: "monospace" }}>No results yet</span>
-                  <span style={{ color: "#374151", fontSize: 11 }}>
+                  <span style={{ color: "#4b5563", fontSize: 14, fontFamily: "monospace" }}>No results yet</span>
+                  <span style={{ color: "#374151", fontSize: 13 }}>
                     {isMongo ? "⌘↵ · run command" : "Ctrl+Enter · run at cursor  |  Ctrl+Shift+Enter · run all"}
                   </span>
                 </div>
@@ -341,13 +363,10 @@ export function QueryPage({
       {/* ── Chat drag handle + panel ── */}
       <DragHandle onMouseDown={onChatDragStart} collapsed={chatCollapsed} onToggle={onChatToggle} label="AI Chat" />
 
-      {chatCollapsed ? (
-        <CollapsedLabel label="AI Chat" onClick={onChatToggle} />
-      ) : (
-        <div style={{ width: chatWidth, flexShrink: 0, overflow: "hidden" }}>
-          <AiChat apiKey={aiKey} providerId={activeAi?.provider_id ?? "gemini"} schemaMetadata={schema} schemaLoading={schemaLoading} onInsertSql={handleInsertSql} onRunQuery={runQuery} onRefreshSchema={onRefreshSchema} />
-        </div>
-      )}
+      <div style={{ width: chatWidth, flexShrink: 0, overflow: "hidden", display: chatCollapsed ? "none" : "block" }}>
+        <AiChat key={connectionId} apiKey={aiKey} providerId={activeAi?.provider_id ?? "gemini"} schemaMetadata={schema} schemaLoading={schemaLoading} onInsertSql={handleInsertSql} onAppendQuery={handleAppendQuery} onRunQuery={runQuery} onRefreshSchema={onRefreshSchema} />
+      </div>
+      {chatCollapsed && <CollapsedLabel label="AI Chat" onClick={onChatToggle} />}
     </div>
   );
 }

@@ -6,16 +6,16 @@ import { useCredentialStore, buildConnectArgs } from "./hooks/useCredentialStore
 import type { DbProfile, AiProfile } from "./hooks/useCredentialStore";
 import { useChangeAgent } from "./hooks/useChangeAgent";
 import { QueryPage }       from "./components/query/QueryPage";
-import { DbProfilesModal, AiKeysModal, AboutModal } from "./components/ui/SettingsModal";
+import { DbProfilesModal, AiKeysModal, AboutModal, HelpModal } from "./components/ui/SettingsModal";
 import { SchemaBrowser }   from "./components/query/SchemaBrowser";
 import type { TableMeta }  from "./types/changes";
 import "./index.css";
 
-type Modal = "db" | "ai" | "about" | null;
+type Modal = "db" | "ai" | "help" | "about" | null;
 
 const SELECT: React.CSSProperties = {
   background: "#191c23", border: "1px solid #2a2f3d", borderRadius: 6,
-  color: "#e8eaf0", fontSize: 12, padding: "6px 10px",
+  color: "#e8eaf0", fontSize: 14, padding: "6px 10px",
   fontFamily: "inherit", cursor: "pointer", outline: "none", width: "100%",
 };
 
@@ -39,7 +39,7 @@ function CollapsedLabel({ label, onClick }: { label: string; onClick: () => void
       onMouseLeave={e => (e.currentTarget.style.background = "#111318")}
     >
       <span style={{
-        fontSize: 11, fontWeight: 700, color: "#6b7280",
+        fontSize: 13, fontWeight: 700, color: "#6b7280",
         textTransform: "uppercase", letterSpacing: 2,
         writingMode: "vertical-rl", transform: "rotate(180deg)",
         userSelect: "none",
@@ -81,7 +81,7 @@ function DragHandle({ onMouseDown, collapsed, onToggle, label }: {
           background: "#191c23", border: "1px solid #2a2f3d",
           borderRadius: 4, width: 18, height: 18,
           display: "flex", alignItems: "center", justifyContent: "center",
-          color: "#6b7280", fontSize: 11, cursor: "pointer", padding: 0,
+          color: "#6b7280", fontSize: 13, cursor: "pointer", padding: 0,
           lineHeight: 1,
         }}
       >
@@ -92,7 +92,7 @@ function DragHandle({ onMouseDown, collapsed, onToggle, label }: {
 }
 
 // ── Help menu ─────────────────────────────────────────────────────────────────
-function HelpMenu({ onAbout }: { onAbout: () => void }) {
+function HelpMenu({ onHelp, onAbout }: { onHelp: () => void; onAbout: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -102,18 +102,26 @@ function HelpMenu({ onAbout }: { onAbout: () => void }) {
   }, []);
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button onClick={() => setOpen(v => !v)} style={{ background: open ? "#191c23" : "transparent", border: "1px solid " + (open ? "#2a2f3d" : "transparent"), borderRadius: 6, padding: "5px 12px", color: "#e8eaf0", fontSize: 12, fontFamily: "inherit", cursor: "pointer" }}>
+      <button onClick={() => setOpen(v => !v)} style={{ background: open ? "#191c23" : "transparent", border: "1px solid " + (open ? "#2a2f3d" : "transparent"), borderRadius: 6, padding: "5px 12px", color: "#e8eaf0", fontSize: 14, fontFamily: "inherit", cursor: "pointer" }}>
         Help
       </button>
       {open && (
         <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, background: "#111318", border: "1px solid #2a2f3d", borderRadius: 8, minWidth: 160, zIndex: 50, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,.5)" }}>
           <button
-            onClick={() => { setOpen(false); onAbout(); }}
-            style={{ width: "100%", textAlign: "left", background: "none", border: "none", color: "#e8eaf0", fontSize: 13, fontFamily: "inherit", padding: "10px 14px", cursor: "pointer" }}
+            onClick={() => { setOpen(false); onHelp(); }}
+            style={{ width: "100%", textAlign: "left", background: "none", border: "none", color: "#e8eaf0", fontSize: 15, fontFamily: "inherit", padding: "10px 14px", cursor: "pointer" }}
             onMouseEnter={e => (e.currentTarget.style.background = "#191c23")}
             onMouseLeave={e => (e.currentTarget.style.background = "none")}
           >
-            ℹ About DbCompanion
+            Getting started
+          </button>
+          <button
+            onClick={() => { setOpen(false); onAbout(); }}
+            style={{ width: "100%", textAlign: "left", background: "none", border: "none", color: "#e8eaf0", fontSize: 15, fontFamily: "inherit", padding: "10px 14px", cursor: "pointer" }}
+            onMouseEnter={e => (e.currentTarget.style.background = "#191c23")}
+            onMouseLeave={e => (e.currentTarget.style.background = "none")}
+          >
+            About
           </button>
         </div>
       )}
@@ -234,18 +242,18 @@ export default function App() {
 
       {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #2a2f3d", background: "#111318", height: 52, flexShrink: 0 }}>
-        <div style={{ padding: "0 16px", fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, height: "100%", borderRight: "1px solid #2a2f3d" }}>
+        <div style={{ padding: "0 16px", fontSize: 17, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, height: "100%", borderRight: "1px solid #2a2f3d" }}>
           <div style={{ width: 8, height: 8, background: "#4f8ef7", borderRadius: "50%", animation: "pulse 2s infinite" }} />
           DbCompanion
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, paddingRight: 16 }}>
-          <span style={{ fontFamily: "monospace", fontSize: 11, padding: "3px 8px", borderRadius: 4, ...(connected ? { border: "1px solid #1e3a5f", color: "#4f8ef7", background: "#0d1a35" } : { border: "1px solid #2a2f3d", color: "#6b7280" }) }}>
+          <span style={{ fontFamily: "monospace", fontSize: 13, padding: "3px 8px", borderRadius: 4, ...(connected ? { border: "1px solid #1e3a5f", color: "#4f8ef7", background: "#0d1a35" } : { border: "1px solid #2a2f3d", color: "#6b7280" }) }}>
             {connected && activeDb ? `● ${activeDb.db_type.charAt(0).toUpperCase() + activeDb.db_type.slice(1)}` : "○ Not connected"}
           </span>
-          <span style={{ fontFamily: "monospace", fontSize: 11, padding: "3px 8px", borderRadius: 4, ...(activeAi ? { border: "1px solid #166534", color: "#22c55e", background: "#052e16" } : { border: "1px solid #854d0e", color: "#f59e0b", background: "#1c1102" }) }}>
+          <span style={{ fontFamily: "monospace", fontSize: 13, padding: "3px 8px", borderRadius: 4, ...(activeAi ? { border: "1px solid #166534", color: "#22c55e", background: "#052e16" } : { border: "1px solid #854d0e", color: "#f59e0b", background: "#1c1102" }) }}>
               {activeAi ? activeAi.provider_id.charAt(0).toUpperCase() + activeAi.provider_id.slice(1) : "⚠ No AI key"}
           </span>
-          <HelpMenu onAbout={() => setModal("about")} />
+          <HelpMenu onHelp={() => setModal("help")} onAbout={() => setModal("about")} />
         </div>
       </div>
 
@@ -263,12 +271,12 @@ export default function App() {
 
               {/* Database */}
               <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: "#6b7280", textTransform: "uppercase", marginBottom: 7, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1.5, color: "#6b7280", textTransform: "uppercase", marginBottom: 7, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   Database
-                  <button onClick={() => setModal("db")} style={{ background: "none", border: "none", color: "#4f8ef7", fontSize: 10, cursor: "pointer", fontFamily: "inherit" }}>Manage</button>
+                  <button onClick={() => setModal("db")} style={{ background: "none", border: "none", color: "#4f8ef7", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Manage</button>
                 </div>
                 {dbProfiles.length === 0 ? (
-                  <div style={{ fontSize: 11, color: "#6b7280" }}>No profiles saved.</div>
+                  <div style={{ fontSize: 13, color: "#6b7280" }}>No profiles saved.</div>
                 ) : (
                   <>
                     <select value={selectedDbId} onChange={e => setSelectedDbId(e.target.value)} style={SELECT}>
@@ -276,13 +284,13 @@ export default function App() {
                       {dbProfiles.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                     </select>
                     {activeDb && (
-                      <div style={{ marginTop: 5, padding: "5px 8px", background: "#191c23", border: `1px solid ${connected ? "#166534" : "#2a2f3d"}`, borderRadius: 6, fontSize: 10, fontFamily: "monospace", color: "#6b7280", wordBreak: "break-all" }}>
+                      <div style={{ marginTop: 5, padding: "5px 8px", background: "#191c23", border: `1px solid ${connected ? "#166534" : "#2a2f3d"}`, borderRadius: 6, fontSize: 12, fontFamily: "monospace", color: "#6b7280", wordBreak: "break-all" }}>
                         <span style={{ color: connected ? "#22c55e" : "#6b7280" }}>{connected ? "●" : "○"}</span>{" "}
                         <span style={{ color: connected ? "#22c55e" : "#9ca3af" }}>{connected ? "Connected" : "Not connected"}</span>
                         {(() => {
                           const summary = (() => {
                             if (activeDb.db_type === "sqlite") return activeDb.filepath ?? "";
-                            if (activeDb.uses_dsn || activeDb.dsn) return "Encrypted connection string";
+                            if (activeDb.uses_dsn || activeDb.dsn) return "Custom connection string";
                             // Fallback for profiles saved via individual fields (no raw DSN stored)
                             if (activeDb.host) {
                               const target = `${activeDb.host}${activeDb.port ? ":" + activeDb.port : ""}${activeDb.dbname ? "/" + activeDb.dbname : ""}`;
@@ -294,14 +302,14 @@ export default function App() {
                         })()}
                       </div>
                     )}
-                    {schemaLoading && <div style={{ fontSize: 10, color: "#6b7280", fontFamily: "monospace", marginTop: 3 }}>Connecting…</div>}
+                    {schemaLoading && <div style={{ fontSize: 12, color: "#6b7280", fontFamily: "monospace", marginTop: 3 }}>Connecting…</div>}
                   </>
                 )}
               </div>
 
               {/* DB connection error — shown directly under Database section */}
               {error && (
-                <div style={{ padding: "7px 9px", background: "#450a0a", border: "1px solid #7f1d1d", borderRadius: 6, fontSize: 11, color: "#f87171", marginBottom: 14, boxSizing: "border-box", display: "flex", alignItems: "flex-start", gap: 6 }}>
+                <div style={{ padding: "7px 9px", background: "#450a0a", border: "1px solid #7f1d1d", borderRadius: 6, fontSize: 13, color: "#f87171", marginBottom: 14, boxSizing: "border-box", display: "flex", alignItems: "flex-start", gap: 6 }}>
                   <span style={{ flex: 1, wordBreak: "break-word" }}>{error}</span>
                   <button onClick={() => setError(null)} style={{ flexShrink: 0, background: "none", border: "none", color: "#f87171", cursor: "pointer", padding: 0, lineHeight: 1 }}>✕</button>
                 </div>
@@ -309,12 +317,12 @@ export default function App() {
 
               {/* AI key */}
               <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: "#6b7280", textTransform: "uppercase", marginBottom: 7, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1.5, color: "#6b7280", textTransform: "uppercase", marginBottom: 7, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   AI Provider Key
-                  <button onClick={() => setModal("ai")} style={{ background: "none", border: "none", color: "#4f8ef7", fontSize: 10, cursor: "pointer", fontFamily: "inherit" }}>Manage</button>
+                  <button onClick={() => setModal("ai")} style={{ background: "none", border: "none", color: "#4f8ef7", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Manage</button>
                 </div>
                 {aiProfiles.length === 0 ? (
-                  <div style={{ fontSize: 11, color: "#6b7280" }}>No keys saved.</div>
+                  <div style={{ fontSize: 13, color: "#6b7280" }}>No keys saved.</div>
                 ) : (
                   <>
                     <select value={selectedGeminiId} onChange={e => setSelectedGeminiId(e.target.value)} style={SELECT}>
@@ -352,6 +360,7 @@ export default function App() {
         {/* ── Main (QueryPage — owns editor + chat split) ── */}
         <div style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
           <QueryPage
+            connectionId={selectedDbId ?? ""}
             schema={schema}
             schemaLoading={schemaLoading}
             onRefreshSchema={() => activeDb && connectAndLoadSchema(activeDb)}
@@ -373,6 +382,7 @@ export default function App() {
       }} onClose={() => setModal(null)} />}
       {modal === "ai" && <AiKeysModal aiProfiles={aiProfiles} onAddAi={(l, k, p) => addAiProfile(l, k, p)} onDeleteAi={deleteAiProfile} onClose={() => setModal(null)} />}
       {modal === "about"  && <AboutModal onClose={() => setModal(null)} />}
+      {modal === "help" && <HelpModal onClose={() => setModal(null)} />}
     </div>
   );
 }

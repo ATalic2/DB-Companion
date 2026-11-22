@@ -294,21 +294,22 @@ impl IDatabaseAdapter for PostgresAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
+        let statements = super::plan_sql_statements(&commands)?;
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| DbError::Transaction(e.to_string()))?;
+        // Keep unqualified names resolvable without placing this session setup
+        // ahead of a plan's optional transaction wrapper.
+        sqlx::query("SET search_path = public").execute(&mut *tx).await
+            .map_err(|e| DbError::Transaction(e.to_string()))?;
 
         let mut outcomes = Vec::new();
         let mut total_rows = 0u64;
 
-        for raw in &commands {
-            let stmts = super::split_sql_statements(raw);
-
-            for sql in stmts {
+        for sql in statements {
                 match sqlx::query(&sql).persistent(false).execute(&mut *tx).await {
                     Ok(r) => {
                         total_rows += r.rows_affected();
@@ -332,29 +333,20 @@ impl IDatabaseAdapter for PostgresAdapter {
                             .map_err(|re| DbError::Rollback(re.to_string()))?;
                         return Ok(TransactionResult {
                             success: false,
-                            dry_run,
                             rows_affected: total_rows,
                             statements: outcomes,
                             error: Some(msg),
                         });
                     }
                 }
-            }
         }
 
-        if dry_run {
-            tx.rollback()
-                .await
-                .map_err(|e| DbError::Rollback(e.to_string()))?;
-        } else {
-            tx.commit()
-                .await
-                .map_err(|e| DbError::Transaction(e.to_string()))?;
-        }
+        tx.commit()
+            .await
+            .map_err(|e| DbError::Transaction(e.to_string()))?;
 
         Ok(TransactionResult {
             success: true,
-            dry_run,
             rows_affected: total_rows,
             statements: outcomes,
             error: None,

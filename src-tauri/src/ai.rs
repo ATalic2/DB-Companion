@@ -61,6 +61,7 @@ pub struct ProviderCredentials {
     pub api_key: Option<Zeroizing<String>>,
     pub base_url: Option<String>, // for Ollama or custom OpenAI-compat endpoints
     pub model: Option<String>,    // override default model
+    pub reasoning_effort: Option<String>, // provider-specific thinking level
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ pub struct ProviderCredentials {
 /// Implementing a new provider:
 ///   1. Create `src/ai/{provider}.rs`
 ///   2. Define a struct and `impl IAiProvider for MyProvider`
-///   3. Register it in `commands/changes.rs` dispatch match
+///   3. Register it in `commands/ai_orchestrator.rs` dispatch match
 ///   4. Add the provider ID to the frontend `AI_PROVIDERS` list
 #[async_trait]
 pub trait IAiProvider: Send + Sync {

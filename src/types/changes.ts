@@ -67,7 +67,6 @@ export interface StatementOutcome {
 
 export interface TransactionResult {
   success:       boolean;
-  dry_run:       boolean;
   rows_affected: number;
   statements:    StatementOutcome[];
   error:         string | null;

@@ -44,7 +44,7 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
   };
 
   if (error) return (
-    <div style={{ padding: 16, background: "#450a0a", border: "1px solid #7f1d1d", borderRadius: 8, fontFamily: "monospace", fontSize: 12, color: "#f87171", margin: 12 }}>
+    <div style={{ padding: 16, background: "#450a0a", border: "1px solid #7f1d1d", borderRadius: 8, fontFamily: "monospace", fontSize: 14, color: "#f87171", margin: 12 }}>
       ✗ {error}
     </div>
   );
@@ -52,7 +52,7 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
   // Only show DML banner when there are genuinely no columns AND no rows
   // (INSERT / UPDATE / DELETE). A SELECT always returns both together.
   if (columns.length === 0 && rows.length === 0 && rowsAffected > 0) return (
-    <div style={{ padding: "12px 16px", fontSize: 12, color: "#22c55e", fontFamily: "monospace" }}>
+    <div style={{ padding: "12px 16px", fontSize: 14, color: "#22c55e", fontFamily: "monospace" }}>
       ✓ Query executed successfully · {rowsAffected} row{rowsAffected !== 1 ? "s" : ""} affected · {executionMs}ms
     </div>
   );
@@ -63,12 +63,12 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* Toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderBottom: "1px solid #2a2f3d", flexShrink: 0 }}>
-        <span style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>
+        <span style={{ fontSize: 13, color: "#6b7280", fontFamily: "monospace" }}>
           {rows.length} row{rows.length !== 1 ? "s" : ""} · {executionMs}ms
         </span>
         {capped && (
           <span style={{
-            fontSize: 10, padding: "2px 8px", borderRadius: 4,
+            fontSize: 12, padding: "2px 8px", borderRadius: 4,
             background: "#1c1400", color: "#f59e0b",
             border: "1px solid #854d0e", fontFamily: "monospace",
           }}>
@@ -84,7 +84,7 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
               onClick={() => setShowExport(v => !v)}
               style={{
                 background: "#191c23", border: "1px solid #2a2f3d", borderRadius: 4,
-                padding: "3px 10px", color: "#9ca3af", fontSize: 11,
+                padding: "3px 10px", color: "#9ca3af", fontSize: 13,
                 fontFamily: "inherit", cursor: "pointer",
                 display: "flex", alignItems: "center", gap: 4,
               }}
@@ -109,14 +109,14 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
                       onClick={() => { setFmt(f); setShowExport(false); }}
                       style={{
                         width: "100%", textAlign: "left", background: "none",
-                        border: "none", color: "#e8eaf0", fontSize: 12,
+                        border: "none", color: "#e8eaf0", fontSize: 14,
                         fontFamily: "inherit", padding: "8px 14px",
                         cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
                       }}
                       onMouseEnter={e => (e.currentTarget.style.background = "#191c23")}
                       onMouseLeave={e => (e.currentTarget.style.background = "none")}
                     >
-                      <span style={{ width: 12, color: "#4f8ef7", fontSize: 11 }}>
+                      <span style={{ width: 12, color: "#4f8ef7", fontSize: 13 }}>
                         {fmt === f ? "✓" : ""}
                       </span>
                       {f}
@@ -132,7 +132,7 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
             onClick={handleExport}
             style={{
               background: "#1e3a5f", border: "1px solid #2a4a7f", borderRadius: 4,
-              padding: "3px 10px", color: "#93c5fd", fontSize: 11,
+              padding: "3px 10px", color: "#93c5fd", fontSize: 13,
               fontFamily: "inherit", cursor: "pointer",
             }}
             onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "#254a7a"; }}
@@ -145,7 +145,7 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
 
       {/* Grid */}
       <div style={{ flex: 1, overflow: "auto" }}>
-        <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse", fontFamily: "monospace", fontSize: 12 }}>
+        <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse", fontFamily: "monospace", fontSize: 14 }}>
           <thead>
             <tr style={{ position: "sticky", top: 0, background: "#171a21", zIndex: 1, boxShadow: "0 1px 0 #394150" }}>
               {columns.map((col, ci) => (
@@ -157,7 +157,7 @@ export function ResultsGrid({ columns, rows, rowsAffected, executionMs, error, c
                   borderBottom: "1px solid #394150",
                   color: "#aeb6c5",
                   fontWeight: 700,
-                  fontSize: 11,
+                  fontSize: 13,
                   letterSpacing: "0.02em",
                   whiteSpace: "nowrap",
                 }}>

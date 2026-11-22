@@ -3,7 +3,8 @@
 // Credential storage strategy:
 //   - Profile METADATA (label, host, port, db_type, etc.) → localStorage
 //     These are not secret and need to be available synchronously for the UI.
-//   - SECRETS (passwords, API keys) → Tauri Stronghold (AES-256-GCM encrypted vault)
+//   - SECRETS (passwords, DSNs, API keys) → encrypted vault
+//     Windows uses current-user DPAPI; macOS and Linux use AES-256-GCM.
 //     Fetched async via Rust commands. Deleted with the app's data directory.
 
 import { useState, useEffect, useCallback } from "react";

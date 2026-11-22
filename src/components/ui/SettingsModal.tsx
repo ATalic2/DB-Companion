@@ -4,6 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { DbProfile, AiProfile, DbType } from "../../hooks/useCredentialStore";
+import { AI_PROVIDERS } from "../../config/aiProviders";
 
 export type SettingsTab = "databases" | "ai";
 
@@ -285,14 +286,6 @@ function DbForm({ onSave, onCancel }: {
   );
 }
 
-// ── AI provider definitions ───────────────────────────────────────────────────
-export const AI_PROVIDERS = [
-  { id: "gemini",    label: "Google Gemini",    available: true,  models: ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"], keyLabel: "Gemini API Key",    keyPlaceholder: "Paste your Gemini API key here", keyHint: "aistudio.google.com",       keyHintUrl: "https://aistudio.google.com/apikey" },
-  { id: "openai",    label: "OpenAI",           available: true,  models: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano"],            keyLabel: "OpenAI API Key",    keyPlaceholder: "sk-...",                         keyHint: "platform.openai.com",       keyHintUrl: "https://platform.openai.com/api-keys" },
-  { id: "anthropic", label: "Anthropic Claude", available: false, models: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"], keyLabel: "Anthropic API Key", keyPlaceholder: "sk-ant-...",                    keyHint: "console.anthropic.com",     keyHintUrl: "https://console.anthropic.com/settings/keys" },
-  { id: "ollama",    label: "Ollama (local)",   available: false, models: ["llama3.3", "mistral", "codellama", "qwen2.5-coder"],                          keyLabel: "Base URL",          keyPlaceholder: "http://localhost:11434",         keyHint: "ollama.com",                keyHintUrl: "https://ollama.com" },
-];
-
 function AiProviderForm({ onSave, onCancel }: {
   onSave:   (label: string, key: string, providerId: string) => Promise<void>;
   onCancel: () => void;
@@ -353,17 +346,15 @@ function AiProviderForm({ onSave, onCancel }: {
       <div>
         <label style={S.label}>{provider.keyLabel}</label>
         <PasswordInput value={key} onChange={setKey} placeholder={provider.keyPlaceholder} />
-        <div style={{ fontSize: 11, color: "#6b7280", marginTop: 6, display: "flex", alignItems: "center", gap: 4 }}>
-          {provider.id === "ollama" ? "Run Ollama locally and enter its base URL above." : (
-            <>Get a free key at{" "}
-              <button onClick={() => openUrl(provider.keyHintUrl)}
-                style={{ background: "none", border: "none", color: "#4f8ef7", cursor: "pointer", fontSize: 11, fontFamily: "inherit", padding: 0, textDecoration: "underline" }}>
-                {provider.keyHint}
-              </button>
-            </>
-          )}
-          {" "}· Stored encrypted on your machine
-        </div>
+        {provider.id !== "ollama" && (
+          <div style={{ marginTop: 6, fontSize: 11, color: "#6b7280" }}>
+            Get a key at{" "}
+            <button onClick={() => openUrl(provider.keyHintUrl)}
+              style={{ background: "none", border: "none", color: "#4f8ef7", cursor: "pointer", fontSize: 11, fontFamily: "inherit", padding: 0, textDecoration: "underline" }}>
+              {provider.keyHint}
+            </button>
+          </div>
+        )}
       </div>
 
       {saveError && (
@@ -429,7 +420,7 @@ function ProfileRow({ p, dbTypeLabel, onDelete, onTest }: {
           <div style={{ fontSize: 13, fontWeight: 500 }}>{p.label}</div>
           <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace", marginTop: 2 }}>
             {p.db_type === "sqlite" ? p.filepath
-              : p.uses_dsn || p.dsn ? "Encrypted connection string"
+              : p.uses_dsn || p.dsn ? "Custom connection string"
               : `${p.user ?? ""}@${p.host ?? ""}:${p.port ?? ""}/${p.dbname ?? ""}`}
           </div>
         </div>
@@ -548,6 +539,25 @@ export function AiKeysModal({ aiProfiles, onAddAi, onDeleteAi, onClose }: {
   );
 }
 
+// ── Help and About ────────────────────────────────────────────────────────────
+export function HelpModal({ onClose }: { onClose: () => void }) {
+  const sections = [
+    ["Connect", "Add a database connection and select it. Add an OpenAI or Gemini API key under AI providers, then select that key."],
+    ["Ask the assistant", "Ask about the connected database or describe a query or change. The assistant receives the current schema and recent messages from this chat. New chat clears that conversation; switching connections starts a separate one."],
+    ["Review a plan", "When the assistant proposes a command, read the full command and risk score before clicking Apply. Nothing in a chat plan runs until you click Apply."],
+    ["After Apply", "A query can return results; a change can affect data or schema. Database errors appear in the chat and console, and the assistant can explain a failed change."],
+    ["Model settings", "Choose a model and an optional reasoning level beside the message box. Default leaves the reasoning choice to the provider."],
+  ];
+  return <ModalShell title="Getting started" onClose={onClose}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, color: "#c4cbd5", fontSize: 14, lineHeight: 1.6 }}>
+      {sections.map(([title, body]) => <div key={title}>
+        <div style={{ color: "#e8eaf0", fontWeight: 600, marginBottom: 3 }}>{title}</div>
+        <div>{body}</div>
+      </div>)}
+    </div>
+  </ModalShell>;
+}
+
 // ── About Modal ───────────────────────────────────────────────────────────────
 export function AboutModal({ onClose }: { onClose: () => void }) {
   const [appVersion, setAppVersion] = useState("");
@@ -557,39 +567,38 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   return (
-    <ModalShell title="ℹ About DbCompanion" onClose={onClose}>
-      <div style={{ fontSize: 13, color: "#9ca3af", lineHeight: 1.8, display: "flex", flexDirection: "column", gap: 16 }}>
+    <ModalShell title="About DbCompanion" onClose={onClose}>
+      <div style={{ fontSize: 15, color: "#9ca3af", lineHeight: 1.6, display: "flex", flexDirection: "column", gap: 16 }}>
 
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>About</div>
-          <div>DbCompanion is an AI-powered database change agent built with Tauri v2 and Rust. Describe a schema change in plain English, review the AI-generated change plan, dry-run it, and execute it with a single click.</div>
-          <div style={{ marginTop: 6, fontFamily: "monospace", fontSize: 11, color: "#4f8ef7" }}>v{appVersion || "…"} · Tauri 2 · Rust</div>
+          <div>DbCompanion lets you explore a database, run queries, and ask an AI assistant for explanations or executable plans. Review each proposed command before applying it.</div>
+          <div style={{ marginTop: 6, fontFamily: "monospace", fontSize: 13, color: "#8b93a3" }}>Version {appVersion || "…"}</div>
         </div>
 
         <div style={{ borderTop: "1px solid #2a2f3d", paddingTop: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Safety Defaults</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Safety Defaults</div>
           {[
             ["Explicit approval required", "No change is ever executed without you reviewing and approving the full plan first. The AI proposes — you decide."],
-            ["Dry run before commit", "Every change is automatically executed inside a transaction and rolled back before you commit, catching syntax errors and constraint violations safely."],
-            ["ACID transaction with auto-rollback", "All SQL statements run inside a single atomic transaction. If any statement fails, the entire change is rolled back automatically — partial changes are architecturally impossible."],
+            ["Apply runs the plan", "Apply executes the proposed commands immediately. Review the commands and consider a backup for consequential changes."],
+            ["Database behavior varies", "Rollback and atomicity depend on the connected database and command. Some operations cannot be rolled back."],
           ].map(([title, desc]) => (
             <div key={title} style={{ marginBottom: 10 }}>
-              <div style={{ color: "#22c55e", fontSize: 12, fontWeight: 600 }}>✓ {title}</div>
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{desc}</div>
+              <div style={{ color: "#d1d5db", fontSize: 14, fontWeight: 600 }}>{title}</div>
+              <div style={{ fontSize: 14, color: "#9ca3af", marginTop: 2 }}>{desc}</div>
             </div>
           ))}
         </div>
 
         <div style={{ borderTop: "1px solid #2a2f3d", paddingTop: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Zero-Knowledge Architecture</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Data and Credentials</div>
           {[
-            ["AI API calls proxied through Rust", "Your API key is never handled by the JavaScript frontend. All AI requests are made by the Rust backend, which zeroizes the key from memory immediately after the call completes."],
-            ["Credentials encrypted at rest", "Database passwords and API keys are stored in a Stronghold vault — an AES-256-GCM encrypted file on your machine. Uninstalling the app and its data directory removes the vault entirely."],
-            ["Nothing leaves your machine", "No telemetry, no cloud sync, no central server. Every credential lives on-device. The only outbound connections are directly from your machine to the AI provider APIs."],
+            ["Direct provider requests", "The app sends AI requests directly to the selected provider. Your API key is passed within the app to authorize each request."],
+            ["Credentials encrypted at rest", "Database passwords, connection strings, and AI provider keys are stored in an encrypted vault on your machine. Windows protects new secrets with current-user DPAPI; macOS and Linux use AES-256-GCM. Uninstalling the app and its data directory removes the vault."],
+            ["Data sent to the provider", "The connected database schema, your message, and recent chat history are sent to the selected AI provider. Database credentials are stored locally."],
           ].map(([title, desc]) => (
             <div key={title} style={{ marginBottom: 10 }}>
-              <div style={{ color: "#4f8ef7", fontSize: 12, fontWeight: 600 }}>🔒 {title}</div>
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{desc}</div>
+              <div style={{ color: "#d1d5db", fontSize: 14, fontWeight: 600 }}>{title}</div>
+              <div style={{ fontSize: 14, color: "#9ca3af", marginTop: 2 }}>{desc}</div>
             </div>
           ))}
         </div>

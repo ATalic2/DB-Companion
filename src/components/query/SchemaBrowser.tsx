@@ -32,7 +32,7 @@ function TypePill({ type }: { type: string }) {
   const short = normalised.length > 14 ? normalised.slice(0, 12) + "…" : normalised;
   return (
     <span style={{
-      fontSize: 9, padding: "1px 4px", borderRadius: 3,
+      fontSize: 11, padding: "1px 4px", borderRadius: 3,
       background: "#0d1117", color: "#4b5563",
       border: "1px solid #1a1f2e", fontFamily: "monospace", flexShrink: 0,
     }}>
@@ -62,12 +62,12 @@ function SectionWrapper({
         onMouseEnter={e => (e.currentTarget.style.background = "#13161e")}
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
       >
-        <span style={{ fontSize: 9, color: "#2d3340", width: 8, flexShrink: 0 }}>
+        <span style={{ fontSize: 11, color: "#2d3340", width: 8, flexShrink: 0 }}>
           {open ? "▼" : "▶"}
         </span>
-        <span style={{ fontSize: 11 }}>{icon}</span>
-        <span style={{ fontSize: 11, color: "#6b7280", flex: 1, fontWeight: 500 }}>{label}</span>
-        <span style={{ fontSize: 9, color: "#2d3340" }}>{count}</span>
+        <span style={{ fontSize: 13 }}>{icon}</span>
+        <span style={{ fontSize: 13, color: "#6b7280", flex: 1, fontWeight: 500 }}>{label}</span>
+        <span style={{ fontSize: 11, color: "#2d3340" }}>{count}</span>
       </div>
       {open && (
         <div style={{ paddingLeft: 16 }}>
@@ -93,13 +93,13 @@ function ColumnsSection({ columns }: { columns: ColumnMeta[] }) {
             {/* Badge */}
             {col.is_pk ? (
               <span style={{
-                fontSize: 8, padding: "1px 3px", borderRadius: 3,
+                fontSize: 10, padding: "1px 3px", borderRadius: 3,
                 background: "#0d1a35", color: "#4f8ef7",
                 border: "1px solid #1e3a5f", flexShrink: 0, lineHeight: 1.4,
               }}>PK</span>
             ) : col.is_fk ? (
               <span style={{
-                fontSize: 8, padding: "1px 3px", borderRadius: 3,
+                fontSize: 10, padding: "1px 3px", borderRadius: 3,
                 background: "#1c1102", color: "#f59e0b",
                 border: "1px solid #854d0e", flexShrink: 0, lineHeight: 1.4,
               }}>FK</span>
@@ -109,7 +109,7 @@ function ColumnsSection({ columns }: { columns: ColumnMeta[] }) {
 
             {/* Name */}
             <span style={{
-              fontSize: 11, fontFamily: "monospace",
+              fontSize: 13, fontFamily: "monospace",
               color: col.is_pk ? "#e8eaf0" : "#9ca3af",
               flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
@@ -140,16 +140,16 @@ function ForeignKeysSection({ columns }: { columns: ColumnMeta[] }) {
           return (
             <div key={col.name} style={{ padding: "4px 6px 4px 0", borderBottom: "1px solid #0e1016" }}>
               {/* constraint name */}
-              <div style={{ fontSize: 9, color: "#374151", fontFamily: "monospace", marginBottom: 2 }}>
+              <div style={{ fontSize: 11, color: "#374151", fontFamily: "monospace", marginBottom: 2 }}>
                 {fk.constraint_name}
               </div>
               {/* from col → ref */}
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, fontFamily: "monospace", color: "#f59e0b" }}>
+                <span style={{ fontSize: 13, fontFamily: "monospace", color: "#f59e0b" }}>
                   {col.name}
                 </span>
-                <span style={{ fontSize: 10, color: "#374151" }}>→</span>
-                <span style={{ fontSize: 11, fontFamily: "monospace", color: "#60a5fa" }}>
+                <span style={{ fontSize: 12, color: "#374151" }}>→</span>
+                <span style={{ fontSize: 13, fontFamily: "monospace", color: "#60a5fa" }}>
                   {fk.ref_table}
                   <span style={{ color: "#374151" }}>.</span>
                   {fk.ref_column}
@@ -159,12 +159,12 @@ function ForeignKeysSection({ columns }: { columns: ColumnMeta[] }) {
               {hasActions && (
                 <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
                   {fk.on_delete && fk.on_delete !== "NO ACTION" && fk.on_delete !== "NO_ACTION" && (
-                    <span style={{ fontSize: 9, color: "#6b7280" }}>
+                    <span style={{ fontSize: 11, color: "#6b7280" }}>
                       DEL: <span style={{ color: actionColor(fk.on_delete) }}>{fk.on_delete}</span>
                     </span>
                   )}
                   {fk.on_update && fk.on_update !== "NO ACTION" && fk.on_update !== "NO_ACTION" && (
-                    <span style={{ fontSize: 9, color: "#6b7280" }}>
+                    <span style={{ fontSize: 11, color: "#6b7280" }}>
                       UPD: <span style={{ color: actionColor(fk.on_update) }}>{fk.on_update}</span>
                     </span>
                   )}
@@ -197,7 +197,7 @@ function ConstraintsSection({ constraints }: { constraints: TableConstraint[] })
           <div key={con.name} style={{ padding: "4px 6px 4px 0", borderBottom: "1px solid #0e1016" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
               <span style={{
-                fontSize: 8, padding: "1px 4px", borderRadius: 3,
+                fontSize: 10, padding: "1px 4px", borderRadius: 3,
                 background: con.constraint_type === "CHECK" ? "#1a0f00" : "#0f1a0f",
                 color:      con.constraint_type === "CHECK" ? "#f97316" : "#4ade80",
                 border: `1px solid ${con.constraint_type === "CHECK" ? "#7c2d12" : "#14532d"}`,
@@ -206,14 +206,14 @@ function ConstraintsSection({ constraints }: { constraints: TableConstraint[] })
                 {con.constraint_type}
               </span>
               <span style={{
-                fontSize: 10, fontFamily: "monospace", color: "#9ca3af",
+                fontSize: 12, fontFamily: "monospace", color: "#9ca3af",
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}>
                 {con.name}
               </span>
             </div>
             <div style={{
-              fontSize: 10, fontFamily: "monospace", color: "#4b5563",
+              fontSize: 12, fontFamily: "monospace", color: "#4b5563",
               whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.5,
             }}>
               {con.definition}
@@ -236,22 +236,22 @@ function IndexesSection({ indexes }: { indexes: IndexMeta[] }) {
             <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
               {idx.unique && (
                 <span style={{
-                  fontSize: 8, padding: "1px 3px", borderRadius: 3,
+                  fontSize: 10, padding: "1px 3px", borderRadius: 3,
                   background: "#1a0f2e", color: "#a78bfa",
                   border: "1px solid #4c1d95", flexShrink: 0, lineHeight: 1.4,
                 }}>UNIQUE</span>
               )}
               <span style={{
-                fontSize: 10, fontFamily: "monospace", color: "#9ca3af",
+                fontSize: 12, fontFamily: "monospace", color: "#9ca3af",
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
               }}>
                 {idx.name}
               </span>
               {idx.index_type && idx.index_type !== "btree" && (
-                <span style={{ fontSize: 9, color: "#374151", flexShrink: 0 }}>{idx.index_type}</span>
+                <span style={{ fontSize: 11, color: "#374151", flexShrink: 0 }}>{idx.index_type}</span>
               )}
             </div>
-            <div style={{ fontSize: 10, fontFamily: "monospace", color: "#4b5563" }}>
+            <div style={{ fontSize: 12, fontFamily: "monospace", color: "#4b5563" }}>
               ({idx.columns.join(", ")})
               {idx.predicate && (
                 <span style={{ color: "#374151" }}> WHERE {idx.predicate}</span>
@@ -282,13 +282,13 @@ function TableNode({ table, onSelect }: { table: TableMeta; onSelect: (t: TableM
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
         onClick={() => { setOpen(v => !v); onSelect(table); }}
       >
-        <span style={{ color: "#4b5563", fontSize: 9, width: 10, flexShrink: 0 }}>
+        <span style={{ color: "#4b5563", fontSize: 11, width: 10, flexShrink: 0 }}>
           {open ? "▼" : "▶"}
         </span>
-        <span style={{ fontSize: 12, fontFamily: "monospace", color: "#4f8ef7", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span style={{ fontSize: 14, fontFamily: "monospace", color: "#4f8ef7", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {table.name}
         </span>
-        <span style={{ fontSize: 10, color: "#4b5563" }}>{table.columns.length}</span>
+        <span style={{ fontSize: 12, color: "#4b5563" }}>{table.columns.length}</span>
       </div>
 
       {/* Expanded sections */}
@@ -326,11 +326,11 @@ function TableGroup({ label, tables, onSelect, defaultOpen, dimmed }: {
         onMouseEnter={e => (e.currentTarget.style.background = "#191c23")}
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
       >
-        <span style={{ fontSize: 9, color: "#4b5563" }}>{open ? "▼" : "▶"}</span>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: dimmed ? "#4b5563" : "#6b7280", flex: 1 }}>
+        <span style={{ fontSize: 11, color: "#4b5563" }}>{open ? "▼" : "▶"}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: dimmed ? "#4b5563" : "#6b7280", flex: 1 }}>
           {label}
         </span>
-        <span style={{ fontSize: 10, color: "#4b5563" }}>{tables.length}</span>
+        <span style={{ fontSize: 12, color: "#4b5563" }}>{tables.length}</span>
       </div>
       {open && tables.map(t => (
         <TableNode key={t.name} table={t} onSelect={onSelect} />
@@ -355,16 +355,16 @@ export function SchemaBrowser({ schema, onSelectTable, onRefresh, loading }: Pro
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* Header */}
       <div style={{ padding: "8px 10px", borderBottom: "1px solid #2a2f3d", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, flex: 1 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, flex: 1 }}>
           {schema ? schema.db_name : "Schema"}
         </span>
         {schema && (
-          <span style={{ fontSize: 10, color: "#4b5563" }}>{allTables.length} tables</span>
+          <span style={{ fontSize: 12, color: "#4b5563" }}>{allTables.length} tables</span>
         )}
         <button
           onClick={onRefresh}
           disabled={loading}
-          style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 13, padding: 2, lineHeight: 1 }}
+          style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 15, padding: 2, lineHeight: 1 }}
           title="Refresh schema"
         >
           {loading ? "…" : "↻"}
@@ -377,19 +377,19 @@ export function SchemaBrowser({ schema, onSelectTable, onRefresh, loading }: Pro
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Filter tables…"
-          style={{ width: "100%", background: "#0a0b0d", border: "1px solid #2a2f3d", borderRadius: 5, padding: "5px 8px", color: "#e8eaf0", fontSize: 11, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }}
+          style={{ width: "100%", background: "#0a0b0d", border: "1px solid #2a2f3d", borderRadius: 5, padding: "5px 8px", color: "#e8eaf0", fontSize: 13, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }}
         />
       </div>
 
       {/* Tree */}
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
         {!schema && !loading && (
-          <div style={{ padding: "16px 12px", fontSize: 11, color: "#4b5563", textAlign: "center" }}>
+          <div style={{ padding: "16px 12px", fontSize: 13, color: "#4b5563", textAlign: "center" }}>
             Connect to a database to see the schema.
           </div>
         )}
         {loading && (
-          <div style={{ padding: "16px 12px", fontSize: 11, color: "#6b7280", textAlign: "center" }}>
+          <div style={{ padding: "16px 12px", fontSize: 13, color: "#6b7280", textAlign: "center" }}>
             Loading schema…
           </div>
         )}
@@ -398,7 +398,7 @@ export function SchemaBrowser({ schema, onSelectTable, onRefresh, loading }: Pro
             <TableGroup label="Tables" tables={userTables} onSelect={onSelectTable} defaultOpen={true} />
             <TableGroup label="System Tables" tables={systemTables} onSelect={onSelectTable} defaultOpen={false} dimmed />
             {filtered.length === 0 && search && (
-              <div style={{ padding: "12px", fontSize: 11, color: "#4b5563", textAlign: "center" }}>
+              <div style={{ padding: "12px", fontSize: 13, color: "#4b5563", textAlign: "center" }}>
                 No tables match "{search}"
               </div>
             )}

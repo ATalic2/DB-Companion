@@ -187,8 +187,8 @@ impl IDatabaseAdapter for SqliteAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
+        let statements = super::plan_sqlite_statements(&commands)?;
         let conn = Arc::clone(&self.conn);
 
         tokio::task::spawn_blocking(move || {
@@ -206,7 +206,7 @@ impl IDatabaseAdapter for SqliteAdapter {
             let mut failed = false;
             let mut fail_msg = String::new();
 
-            for sql in &commands {
+            for sql in &statements {
                 match guard.execute(sql.as_str(), []) {
                     Ok(rows) => {
                         total_rows += rows as u64;
@@ -231,7 +231,7 @@ impl IDatabaseAdapter for SqliteAdapter {
                 }
             }
 
-            if failed || dry_run {
+            if failed {
                 guard
                     .execute_batch(&format!("ROLLBACK TO SAVEPOINT {sp}; RELEASE {sp}"))
                     .map_err(|e| DbError::Rollback(e.to_string()))?;
@@ -243,7 +243,6 @@ impl IDatabaseAdapter for SqliteAdapter {
 
             Ok(TransactionResult {
                 success: !failed,
-                dry_run,
                 rows_affected: total_rows,
                 statements: outcomes,
                 error: if failed { Some(fail_msg) } else { None },

@@ -1,7 +1,7 @@
 //! OpenAI provider using the Responses API.
 
 use super::{ChangePlan, ChatMessage, ChatRole, IAiProvider, ProviderCredentials, ProviderInfo};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Serialize;
@@ -19,6 +19,8 @@ struct OpenAiInput {
 #[derive(Serialize)]
 struct OpenAiRequest {
     model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<Value>,
     instructions: String,
     input: Vec<OpenAiInput>,
     text: Value,
@@ -42,6 +44,19 @@ impl OpenAiProvider {
             .model
             .clone()
             .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+    }
+
+    fn reasoning(credentials: &ProviderCredentials) -> Option<Value> {
+        let model = Self::model(credentials);
+        let allowed: &[&str] = match model.as_str() {
+            "gpt-5.4-mini" | "gpt-5.4" => &["none", "low", "medium", "high", "xhigh"],
+            "gpt-6.1-sol" | "gpt-6-astra" => &["low", "medium", "high", "xhigh", "max"],
+            "gpt-6-luna" | "gpt-6.1-terra" => &["none", "low", "medium", "high", "xhigh", "max"],
+            _ => &[],
+        };
+        credentials.reasoning_effort.as_deref()
+            .filter(|effort| allowed.contains(effort))
+            .map(|effort| json!({"effort": effort}))
     }
 
     fn api_key(credentials: &ProviderCredentials) -> Result<&str> {
@@ -111,6 +126,39 @@ impl OpenAiProvider {
             .ok_or_else(|| anyhow!("OpenAI returned no text output"))
     }
 
+    fn stream_error_detail(event: &Value) -> String {
+        let message = event.get("message").and_then(Value::as_str)
+            .or_else(|| event.pointer("/error/message").and_then(Value::as_str))
+            .or_else(|| event.get("error").and_then(Value::as_str))
+            .or_else(|| event.pointer("/response/error/message").and_then(Value::as_str))
+            .or_else(|| event.get("detail").and_then(Value::as_str));
+        let code = event.get("code").and_then(Value::as_str)
+            .or_else(|| event.pointer("/error/code").and_then(Value::as_str))
+            .or_else(|| event.pointer("/response/error/code").and_then(Value::as_str));
+
+        match (message, code) {
+            (Some(message), Some(code)) => format!("{message} ({code})"),
+            (Some(message), None) => message.to_string(),
+            (None, Some(code)) => format!("Error code: {code}"),
+            (None, None) => format!("Unrecognized error event: {}", Self::stream_error_diagnostic(event)),
+        }
+    }
+
+    fn stream_error_diagnostic(event: &Value) -> Value {
+        json!({
+            "type": event.get("type"),
+            "message": event.get("message").or_else(|| event.pointer("/error/message"))
+                .or_else(|| event.pointer("/response/error/message")),
+            "code": event.get("code").or_else(|| event.pointer("/error/code"))
+                .or_else(|| event.pointer("/response/error/code")),
+            "param": event.get("param").or_else(|| event.pointer("/error/param")),
+            "detail": event.get("detail").and_then(Value::as_str),
+            "response_status": event.pointer("/response/status"),
+            "incomplete_reason": event.pointer("/response/incomplete_details/reason"),
+            "event_fields": event.as_object().map(|fields| fields.keys().collect::<Vec<_>>()),
+        })
+    }
+
     async fn send(&self, api_key: &str, body: &OpenAiRequest) -> Result<Value> {
         let response = Self::client()
             .post(RESPONSES_URL)
@@ -147,6 +195,7 @@ impl OpenAiProvider {
     ) -> OpenAiRequest {
         OpenAiRequest {
             model: Self::model(credentials),
+            reasoning: Self::reasoning(credentials),
             instructions: system.to_string(),
             input: Self::build_input(history, message),
             text: Self::structured_text("db_companion_chat_response", chat_response_schema()),
@@ -164,8 +213,11 @@ impl IAiProvider for OpenAiProvider {
             display_name: "OpenAI".into(),
             models: vec![
                 "gpt-5.4-mini".into(),
+                "gpt-6-luna".into(),
+                "gpt-6.1-sol".into(),
+                "gpt-6.1-terra".into(),
+                "gpt-6-astra".into(),
                 "gpt-5.4".into(),
-                "gpt-5.4-nano".into(),
             ],
             requires_key: true,
             requires_url: false,
@@ -204,6 +256,7 @@ Every step must be safe to run in sequence inside one transaction."#
         );
         let body = OpenAiRequest {
             model: Self::model(credentials),
+            reasoning: Self::reasoning(credentials),
             instructions: "You are a senior database engineer and schema change safety expert. Produce the requested database change plan.".into(),
             input: vec![OpenAiInput {
                 role: "user",
@@ -243,12 +296,20 @@ Every step must be safe to run in sequence inside one transaction."#
         let mut response = Self::client()
             .post(RESPONSES_URL)
             .bearer_auth(Self::api_key(credentials)?)
+            .header(reqwest::header::ACCEPT, "text/event-stream")
             .json(&body)
             .send()
             .await?;
+        let status = response.status();
+        let request_id = response.headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let request_id_note = request_id.as_deref()
+            .map(|id| format!(", request ID {id}"))
+            .unwrap_or_default();
 
-        if !response.status().is_success() {
-            let status = response.status();
+        if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
             let detail = serde_json::from_str::<Value>(&text)
                 .ok()
@@ -259,12 +320,13 @@ Every step must be safe to run in sequence inside one transaction."#
                         .map(str::to_string)
                 })
                 .unwrap_or(text);
-            bail!("OpenAI API error {status}: {detail}");
+            bail!("OpenAI API error {status}{request_id_note}: {detail}");
         }
 
         let mut pending = String::new();
         let mut full = String::new();
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = response.chunk().await.with_context(||
+            format!("OpenAI stream read failed (HTTP {status}{request_id_note})"))? {
             pending.push_str(&String::from_utf8_lossy(&chunk));
             while let Some(end) = pending.find('\n') {
                 let line = pending[..end].trim_end_matches('\r').to_string();
@@ -276,7 +338,7 @@ Every step must be safe to run in sequence inside one transaction."#
                     continue;
                 }
                 let event: Value = serde_json::from_str(data)
-                    .map_err(|error| anyhow!("Failed to parse OpenAI stream event: {error}"))?;
+                    .with_context(|| format!("Failed to parse OpenAI stream event (HTTP {status}{request_id_note})"))?;
                 match event.get("type").and_then(Value::as_str) {
                     Some("response.output_text.delta") => {
                         if let Some(delta) = event.get("delta").and_then(Value::as_str) {
@@ -285,18 +347,14 @@ Every step must be safe to run in sequence inside one transaction."#
                         }
                     }
                     Some("error") => {
-                        let message = event
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Unknown streaming error");
-                        bail!("OpenAI stream error: {message}");
+                        let detail = Self::stream_error_detail(&event);
+                        return Err(anyhow!("event: {}", Self::stream_error_diagnostic(&event)))
+                            .with_context(|| format!("OpenAI stream error (HTTP {status}{request_id_note}): {detail}"));
                     }
                     Some("response.failed") => {
-                        let message = event
-                            .pointer("/response/error/message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Response generation failed");
-                        bail!("OpenAI stream error: {message}");
+                        let detail = Self::stream_error_detail(&event);
+                        return Err(anyhow!("event: {}", Self::stream_error_diagnostic(&event)))
+                            .with_context(|| format!("OpenAI stream error (HTTP {status}{request_id_note}): {detail}"));
                     }
                     _ => {}
                 }
@@ -304,7 +362,7 @@ Every step must be safe to run in sequence inside one transaction."#
         }
 
         if full.is_empty() {
-            bail!("OpenAI returned no text output");
+            bail!("OpenAI returned no text output (HTTP {status}{request_id_note})");
         }
         Ok((full, request_json))
     }
@@ -354,6 +412,27 @@ fn chat_response_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_errors_preserve_nested_details() {
+        let nested = json!({"type": "error", "error": {"message": "Account quota reached", "code": "insufficient_quota"}});
+        assert_eq!(OpenAiProvider::stream_error_detail(&nested), "Account quota reached (insufficient_quota)");
+        let unknown = json!({"type": "error", "detail": "unexpected shape"});
+        assert!(OpenAiProvider::stream_error_detail(&unknown).contains("unexpected shape"));
+    }
+
+    #[test]
+    fn reasoning_effort_is_model_specific_and_optional() {
+        let mut credentials = ProviderCredentials {
+            api_key: None, base_url: None, model: Some("gpt-6.1-sol".into()),
+            reasoning_effort: None,
+        };
+        assert!(OpenAiProvider::reasoning(&credentials).is_none());
+        credentials.reasoning_effort = Some("none".into());
+        assert!(OpenAiProvider::reasoning(&credentials).is_none());
+        credentials.reasoning_effort = Some("high".into());
+        assert_eq!(OpenAiProvider::reasoning(&credentials), Some(json!({"effort": "high"})));
+    }
 
     #[test]
     fn extracts_output_text_without_assuming_first_output_item() {

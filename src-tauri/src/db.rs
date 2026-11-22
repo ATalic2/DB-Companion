@@ -92,7 +92,6 @@ pub struct StatementOutcome {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionResult {
     pub success: bool,
-    pub dry_run: bool,
     pub rows_affected: u64,
     pub statements: Vec<StatementOutcome>,
     pub error: Option<String>,
@@ -105,7 +104,6 @@ pub trait IDatabaseAdapter: Send + Sync {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run: bool,
     ) -> Result<TransactionResult, DbError>;
     async fn run_query(&self, sql: &str) -> Result<QueryResult, DbError>;
 
@@ -338,9 +336,66 @@ pub fn split_sql_statements(script: &str) -> Vec<String> {
     statements
 }
 
+/// Flatten an AI plan and leave transaction ownership with the adapter.
+pub fn plan_sql_statements(commands: &[String]) -> Result<Vec<String>, DbError> {
+    let statements: Vec<String> = commands.iter()
+        .flat_map(|command| split_sql_statements(command))
+        .collect();
+    normalize_plan_statements(statements)
+}
+
+/// SQLite trigger bodies contain semicolons, but are one SQL statement.
+pub fn plan_sqlite_statements(commands: &[String]) -> Result<Vec<String>, DbError> {
+    let statements = commands.iter().flat_map(|command| {
+        let upper = command.trim_start().to_ascii_uppercase();
+        let words: Vec<_> = upper.split_whitespace().take(3).collect();
+        let is_trigger = matches!(words.as_slice(), ["CREATE", "TRIGGER", ..]
+            | ["CREATE", "TEMP", "TRIGGER"] | ["CREATE", "TEMPORARY", "TRIGGER"]);
+        if is_trigger { vec![command.trim().to_string()] } else { split_sql_statements(command) }
+    }).collect();
+    normalize_plan_statements(statements)
+}
+
+fn normalize_plan_statements(mut statements: Vec<String>) -> Result<Vec<String>, DbError> {
+    let normalized = |sql: &str| sql.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_uppercase();
+    let starts = |sql: &str| matches!(normalized(sql).as_str(), "START TRANSACTION" | "BEGIN" | "BEGIN WORK" | "BEGIN TRANSACTION");
+    let commits = |sql: &str| matches!(normalized(sql).as_str(), "COMMIT" | "COMMIT WORK" | "COMMIT TRANSACTION");
+    let has_start = statements.first().is_some_and(|sql| starts(sql));
+    let has_commit = statements.last().is_some_and(|sql| commits(sql));
+    if has_start != has_commit {
+        return Err(DbError::Transaction("The plan has an incomplete transaction wrapper. Remove BEGIN/START TRANSACTION and COMMIT, then review it again.".into()));
+    }
+    if has_start {
+        statements.remove(0);
+        statements.pop();
+    }
+    if statements.is_empty() || statements.iter().any(|sql| starts(sql) || commits(sql) || normalized(sql).starts_with("ROLLBACK")) {
+        return Err(DbError::Transaction("The plan has no executable SQL or contains nested transaction commands. DbCompanion manages the transaction.".into()));
+    }
+    Ok(statements)
+}
+
 #[cfg(test)]
 mod sql_split_tests {
-    use super::split_sql_statements;
+    use super::{plan_sql_statements, plan_sqlite_statements, split_sql_statements};
+
+    #[test]
+    fn sqlite_trigger_body_stays_one_statement() {
+        let commands = vec!["CREATE TRIGGER tr AFTER INSERT ON t BEGIN UPDATE t SET x = 1; UPDATE t SET y = 2; END;".to_string()];
+        assert_eq!(plan_sqlite_statements(&commands).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn plan_wrapper_is_removed_without_losing_statements() {
+        let commands = vec!["START TRANSACTION; INSERT INTO t VALUES (1), (2); COMMIT;".to_string()];
+        assert_eq!(plan_sql_statements(&commands).unwrap(), vec!["INSERT INTO t VALUES (1), (2)"]);
+    }
+
+    #[test]
+    fn nested_transaction_control_is_rejected() {
+        let commands = vec!["INSERT INTO t VALUES (1); COMMIT;".to_string()];
+        assert!(plan_sql_statements(&commands).is_err());
+    }
 
     #[test]
     fn preserves_semicolons_in_strings_and_dollar_blocks() {

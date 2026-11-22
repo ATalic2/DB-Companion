@@ -53,7 +53,7 @@ function DetailPane({ detail }: { detail: string }) {
       <pre style={{
         background: "#080a0e", border: "1px solid #1a1f2e",
         borderRadius: 6, padding: "8px 10px", margin: 0,
-        fontFamily: "monospace", fontSize: 10, color: "#a8c7fa",
+        fontFamily: "monospace", fontSize: 12, color: "#a8c7fa",
         overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
         height, overflowY: "auto",
         // keep the bottom resize handle inside the rounded border
@@ -101,14 +101,14 @@ function LogLine({ entry }: { entry: LogEntry }) {
         style={{
           display: "flex", alignItems: "baseline", gap: 8,
           padding: "3px 10px", cursor: hasDetail ? "pointer" : "default",
-          fontFamily: "monospace", fontSize: 11,
+          fontFamily: "monospace", fontSize: 13,
         }}
         onMouseEnter={e => { if (hasDetail) e.currentTarget.style.background = "#191c23"; }}
         onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
       >
         <span style={{ color: "#374151", flexShrink: 0 }}>{entry.timestamp}</span>
         <span style={{
-          color: style.color, fontSize: 9, fontWeight: 700,
+          color: style.color, fontSize: 11, fontWeight: 700,
           padding: "1px 4px", borderRadius: 3,
           border: `1px solid ${style.color}40`,
           flexShrink: 0, minWidth: 36, textAlign: "center",
@@ -119,7 +119,7 @@ function LogLine({ entry }: { entry: LogEntry }) {
           {entry.message}
         </span>
         {hasDetail && (
-          <span style={{ color: "#4b5563", fontSize: 10, flexShrink: 0 }}>
+          <span style={{ color: "#4b5563", fontSize: 12, flexShrink: 0 }}>
             {open ? "▲" : "▼"}
           </span>
         )}
@@ -152,10 +152,10 @@ export function LogPanel() {
         padding: "4px 10px", borderBottom: "1px solid #2a2f3d",
         background: "#111318", flexShrink: 0,
       }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>
           Console
         </span>
-        <span style={{ fontSize: 10, color: "#374151" }}>{log.length} entries</span>
+        <span style={{ fontSize: 12, color: "#374151" }}>{log.length} entries</span>
 
         {/* Filter pills */}
         <div style={{ display: "flex", gap: 4, marginLeft: 8 }}>
@@ -166,7 +166,7 @@ export function LogPanel() {
               style={{
                 background: filter === lvl ? "#191c23" : "transparent",
                 border: `1px solid ${filter === lvl ? "#2a2f3d" : "transparent"}`,
-                borderRadius: 4, padding: "1px 7px", fontSize: 10,
+                borderRadius: 4, padding: "1px 7px", fontSize: 12,
                 color: filter === lvl ? "#e8eaf0" : "#4b5563",
                 cursor: "pointer", fontFamily: "monospace",
               }}
@@ -177,7 +177,7 @@ export function LogPanel() {
         </div>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#6b7280", cursor: "pointer" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#6b7280", cursor: "pointer" }}>
             <input
               type="checkbox"
               checked={autoScroll}
@@ -188,7 +188,7 @@ export function LogPanel() {
           </label>
           <button
             onClick={clearLog}
-            style={{ background: "transparent", border: "1px solid #2a2f3d", borderRadius: 4, padding: "2px 8px", color: "#6b7280", fontSize: 10, fontFamily: "inherit", cursor: "pointer" }}
+            style={{ background: "transparent", border: "1px solid #2a2f3d", borderRadius: 4, padding: "2px 8px", color: "#6b7280", fontSize: 12, fontFamily: "inherit", cursor: "pointer" }}
           >
             Clear
           </button>
@@ -198,7 +198,7 @@ export function LogPanel() {
       {/* Log lines */}
       <div style={{ flex: 1, overflowY: "auto" }}>
         {filtered.length === 0 && (
-          <div style={{ padding: "16px", fontSize: 11, color: "#374151", textAlign: "center", fontFamily: "monospace" }}>
+          <div style={{ padding: "16px", fontSize: 13, color: "#374151", textAlign: "center", fontFamily: "monospace" }}>
             No log entries yet. Actions will appear here.
           </div>
         )}

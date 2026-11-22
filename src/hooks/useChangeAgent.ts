@@ -18,9 +18,9 @@ export function useChangeAgent() {
 
   const getSchema = () => invoke<SchemaMetadata>("get_schema");
 
-  const executeChanges = (commands: string[], dryRun: boolean) =>
+  const executeChanges = (commands: string[]) =>
     invoke<{ result: TransactionResult }>("execute_changes", {
-      args: { commands, dry_run: dryRun },
+      args: { commands },
     });
 
   return {

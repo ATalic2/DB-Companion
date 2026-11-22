@@ -13,31 +13,17 @@ interface Props {
 
 export function ReviewView({ plan, onBack }: Props) {
   const { executeChanges } = useChangeAgent();
-  const [dryResult,  setDryResult]  = useState<TransactionResult | null>(null);
   const [execResult, setExecResult] = useState<TransactionResult | null>(null);
-  const [dryLoading,  setDryLoading]  = useState(false);
   const [execLoading, setExecLoading] = useState(false);
 
   const commands = plan.steps
     .filter(s => s.type === "SQL")
     .map(s => s.command);
 
-  const handleDryRun = async () => {
-    setDryLoading(true);
-    try {
-      const res = await executeChanges(commands, true);
-      setDryResult(res.result);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setDryLoading(false);
-    }
-  };
-
   const handleExecute = async () => {
     setExecLoading(true);
     try {
-      const res = await executeChanges(commands, false);
+      const res = await executeChanges(commands);
       setExecResult(res.result);
     } catch (e) {
       console.error(e);
@@ -60,23 +46,9 @@ export function ReviewView({ plan, onBack }: Props) {
       <div style={{ padding: 16 }}>
         <DiffView steps={plan.steps} />
 
-        {dryResult  && <LogOutput result={dryResult} />}
         {execResult && <LogOutput result={execResult} />}
 
         <div style={{ display: "flex", gap: 10, marginTop: 16, paddingTop: 16, borderTop: "1px solid #2a2f3d" }}>
-          <button
-            onClick={handleDryRun}
-            disabled={dryLoading || executed}
-            style={{
-              background: "transparent", color: "#e8eaf0",
-              border: "1px solid #2a2f3d", borderRadius: 6,
-              padding: "8px 16px", fontSize: 13, fontFamily: "inherit",
-              cursor: dryLoading || executed ? "not-allowed" : "pointer",
-            }}
-          >
-            {dryLoading ? "Running…" : "⟳ Dry Run"}
-          </button>
-
           <div style={{ flex: 1 }} />
 
           <button onClick={onBack} style={{ background: "transparent", color: "#e8eaf0", border: "1px solid #2a2f3d", borderRadius: 6, padding: "8px 16px", fontSize: 13, fontFamily: "inherit", cursor: "pointer" }}>

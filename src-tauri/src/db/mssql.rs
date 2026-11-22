@@ -324,8 +324,28 @@ impl IDatabaseAdapter for MssqlAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
+        // Preserve SQL Server batches intact, but never let a plan change the
+        // transaction opened below.
+        let has_transaction_control = commands.iter()
+            .filter(|batch| {
+                let sql = batch.trim_start().to_ascii_uppercase();
+                !["CREATE PROCEDURE", "CREATE PROC", "ALTER PROCEDURE", "ALTER PROC",
+                    "CREATE OR ALTER PROCEDURE", "CREATE OR ALTER PROC",
+                    "CREATE TRIGGER", "ALTER TRIGGER", "CREATE OR ALTER TRIGGER"]
+                    .iter().any(|prefix| sql.starts_with(prefix))
+            })
+            .flat_map(|batch| super::split_sql_statements(batch))
+            .any(|statement| {
+                let sql = statement.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_uppercase();
+                sql.starts_with("BEGIN TRANSACTION") || sql.starts_with("BEGIN TRAN ") || sql == "BEGIN TRAN"
+                    || sql.starts_with("COMMIT TRANSACTION") || sql.starts_with("COMMIT TRAN ")
+                    || sql.starts_with("ROLLBACK TRANSACTION") || sql.starts_with("ROLLBACK TRAN ")
+                    || sql == "COMMIT" || sql == "ROLLBACK" || sql == "COMMIT TRAN" || sql == "ROLLBACK TRAN"
+            });
+        if has_transaction_control {
+            return Err(DbError::Transaction("Remove BEGIN/COMMIT/ROLLBACK TRANSACTION from the plan; DbCompanion manages the transaction.".into()));
+        }
         let mut client = self.connect().await?;
         let mut outcomes = Vec::new();
         let mut total_rows = 0u64;
@@ -360,7 +380,6 @@ impl IDatabaseAdapter for MssqlAdapter {
                     client.simple_query("ROLLBACK TRANSACTION").await.ok();
                     return Ok(TransactionResult {
                         success: false,
-                        dry_run,
                         rows_affected: total_rows,
                         statements: outcomes,
                         error: Some(msg),
@@ -369,21 +388,13 @@ impl IDatabaseAdapter for MssqlAdapter {
             }
         }
 
-        if dry_run {
-            client
-                .simple_query("ROLLBACK TRANSACTION")
-                .await
-                .map_err(|e| DbError::Rollback(e.to_string()))?;
-        } else {
-            client
-                .simple_query("COMMIT TRANSACTION")
-                .await
-                .map_err(|e| DbError::Transaction(e.to_string()))?;
-        }
+        client
+            .simple_query("COMMIT TRANSACTION")
+            .await
+            .map_err(|e| DbError::Transaction(e.to_string()))?;
 
         Ok(TransactionResult {
             success: true,
-            dry_run,
             rows_affected: total_rows,
             statements: outcomes,
             error: None,

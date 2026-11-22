@@ -23,17 +23,11 @@ export function LogOutput({ result }: Props) {
           [{ts}] {s.sql.substring(0, 60)}… — {s.ok ? "OK" : `FAILED: ${s.error}`}
         </div>
       ))}
-      {result.dry_run ? (
-        <div style={{ color: "#f59e0b", marginTop: 4 }}>
-          ⟳ Dry run complete — transaction rolled back cleanly
-        </div>
-      ) : (
-        <div style={{ fontWeight: 500, marginTop: 4 }}>
-          {result.success
-            ? `● ${result.statements.length} statements · 0 errors · ACID-compliant`
-            : `✗ Change failed — full rollback applied`}
-        </div>
-      )}
+      <div style={{ fontWeight: 500, marginTop: 4 }}>
+        {result.success
+          ? `● ${result.statements.length} statements executed · 0 errors`
+          : `✗ Change failed${result.error ? ` — ${result.error}` : ""}`}
+      </div>
     </div>
   );
 }

@@ -75,6 +75,53 @@ async fn mongosh_json(uri: &str, db_name: &str, js: &str) -> Result<serde_json::
         .map_err(|e| DbError::Transaction(format!("Failed to parse mongosh output as JSON: {e}")))
 }
 
+/// Parse an AI-produced MongoDB command and translate shell-helper names to
+/// their `db.runCommand()` equivalents. `createCollection` is a mongosh method,
+/// while the command document accepted by the server uses `create`.
+fn normalize_mongo_command(input: &str) -> Result<serde_json::Value, DbError> {
+    let mut command: serde_json::Value = serde_json::from_str(input)
+        .map_err(|e| DbError::Transaction(format!("Invalid MongoDB command JSON: {e}")))?;
+    let object = command.as_object_mut().ok_or_else(|| {
+        DbError::Transaction("MongoDB commands must be JSON objects".into())
+    })?;
+
+    if object.contains_key("createCollection") {
+        let fields = std::mem::take(object);
+        for (key, value) in fields {
+            let key = if key == "createCollection" {
+                "create".to_string()
+            } else {
+                key
+            };
+            object.entry(key).or_insert(value);
+        }
+    }
+
+    // MongoDB requires aggregate commands to opt into cursor results. Models
+    // commonly produce only the collection and pipeline, so make the valid
+    // default explicit when this is a normal (non-explain) aggregation.
+    if object.contains_key("aggregate")
+        && !object.contains_key("cursor")
+        && !object.contains_key("explain")
+    {
+        object.insert("cursor".to_string(), serde_json::json!({}));
+    }
+
+    Ok(command)
+}
+
+/// Build a safe JavaScript expression for a command document. EJSON.parse
+/// converts Extended JSON values such as `{ "$date": "..." }` into their
+/// native BSON types before the command reaches MongoDB.
+fn mongo_command_expression(input: &str) -> Result<String, DbError> {
+    let command = normalize_mongo_command(input)?;
+    let command_json = serde_json::to_string(&command)
+        .map_err(|e| DbError::Transaction(format!("Could not serialize MongoDB command: {e}")))?;
+    let js_string = serde_json::to_string(&command_json)
+        .map_err(|e| DbError::Transaction(format!("Could not quote MongoDB command: {e}")))?;
+    Ok(format!("EJSON.parse({js_string})"))
+}
+
 #[async_trait]
 impl IDatabaseAdapter for MongoAdapter {
     fn driver_name(&self) -> &str {
@@ -191,35 +238,30 @@ impl IDatabaseAdapter for MongoAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
-        if dry_run {
-            let outcomes = commands
-                .iter()
-                .map(|cmd| StatementOutcome {
-                    sql: cmd.clone(),
-                    rows_affected: 0,
-                    ok: true,
-                    error: None,
-                })
-                .collect();
-            return Ok(TransactionResult {
-                success: true,
-                dry_run: true,
-                rows_affected: 0,
-                statements: outcomes,
-                error: None,
-            });
-        }
-
         let mut outcomes = Vec::new();
         let mut total_rows = 0u64;
 
         for cmd_str in &commands {
-            // Wrap the JSON command in a db.runCommand() call
-            let js = format!("JSON.stringify(db.runCommand({cmd_str}))");
+            // Parse as Extended JSON, then pass the resulting command document
+            // to MongoDB. This also prevents command text from becoming raw JS.
+            let command = mongo_command_expression(cmd_str)?;
+            let js = format!("JSON.stringify(db.runCommand({command}))");
             match mongosh_json(&self.uri, &self.db_name, &js).await {
                 Ok(result) => {
+                    if result.get("ok").and_then(|v| v.as_f64()) != Some(1.0) {
+                        let msg = result.get("errmsg").and_then(|v| v.as_str())
+                            .unwrap_or("MongoDB reported an unsuccessful command")
+                            .to_string();
+                        outcomes.push(StatementOutcome {
+                            sql: cmd_str.clone(), rows_affected: 0, ok: false,
+                            error: Some(msg.clone()),
+                        });
+                        return Ok(TransactionResult {
+                            success: false, rows_affected: total_rows,
+                            statements: outcomes, error: Some(msg),
+                        });
+                    }
                     let n = result.get("n").and_then(|v| v.as_u64()).unwrap_or(0);
                     total_rows += n;
                     outcomes.push(StatementOutcome {
@@ -230,7 +272,13 @@ impl IDatabaseAdapter for MongoAdapter {
                     });
                 }
                 Err(e) => {
-                    let msg = e.to_string();
+                    // mongosh process failures are represented as connection
+                    // errors by the shared runner, but at this point the app is
+                    // already connected and the command itself failed.
+                    let msg = match e {
+                        DbError::Connection(message) => message,
+                        other => other.to_string(),
+                    };
                     outcomes.push(StatementOutcome {
                         sql: cmd_str.clone(),
                         rows_affected: 0,
@@ -239,7 +287,6 @@ impl IDatabaseAdapter for MongoAdapter {
                     });
                     return Ok(TransactionResult {
                         success: false,
-                        dry_run,
                         rows_affected: total_rows,
                         statements: outcomes,
                         error: Some(msg),
@@ -250,7 +297,6 @@ impl IDatabaseAdapter for MongoAdapter {
 
         Ok(TransactionResult {
             success: true,
-            dry_run,
             rows_affected: total_rows,
             statements: outcomes,
             error: None,
@@ -260,13 +306,22 @@ impl IDatabaseAdapter for MongoAdapter {
     async fn run_query(&self, input: &str) -> Result<crate::commands::query::QueryResult, DbError> {
         // Input can be either a JSON command doc or raw JS expression
         let js = if input.trim_start().starts_with('{') {
-            format!("(()=>{{const r=db.runCommand({input});if(r?.cursor?.firstBatch?.length>{})r.cursor.firstBatch=r.cursor.firstBatch.slice(0,{});return JSON.stringify(r)}})()", crate::commands::query::ROW_CAP, crate::commands::query::ROW_CAP + 1)
+            let command = mongo_command_expression(input)?;
+            format!("(()=>{{const r=db.runCommand({command});if(r?.cursor?.firstBatch?.length>{})r.cursor.firstBatch=r.cursor.firstBatch.slice(0,{});return JSON.stringify(r)}})()", crate::commands::query::ROW_CAP, crate::commands::query::ROW_CAP + 1)
         } else {
             // Raw JS — wrap result in JSON.stringify
             format!("(()=>{{const r=({input});return JSON.stringify(Array.isArray(r)?r.slice(0,{}):r)}})()", crate::commands::query::ROW_CAP + 1)
         };
 
         let result = mongosh_json(&self.uri, &self.db_name, &js).await?;
+        // find and aggregate return their documents inside cursor.firstBatch.
+        // Feed that batch through the same tabular conversion as direct arrays.
+        let result = match result.pointer("/cursor/firstBatch") {
+            Some(serde_json::Value::Array(documents)) => {
+                serde_json::Value::Array(documents.clone())
+            }
+            _ => result,
+        };
 
         // If result is an array of documents, expand into rows
         if let serde_json::Value::Array(docs) = &result {
@@ -306,7 +361,7 @@ impl IDatabaseAdapter for MongoAdapter {
                 rows_affected: docs.len() as u64,
                 execution_ms: 0,
                 error: None,
-                capped: false,
+                capped,
             });
         }
 
@@ -363,6 +418,56 @@ impl IDatabaseAdapter for MongoAdapter {
         // Run the whole script as-is via mongosh; it will print the return
         // value of each top-level statement, same as pasting it interactively.
         mongosh_eval(&self.uri, &self.db_name, use_re_stripped).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mongo_command_expression, normalize_mongo_command};
+    use serde_json::json;
+
+    #[test]
+    fn translates_create_collection_helper_to_server_command() {
+        let command = normalize_mongo_command(r#"{"createCollection":"users"}"#).unwrap();
+        assert_eq!(command, json!({ "create": "users" }));
+        assert_eq!(command.as_object().unwrap().keys().next().unwrap(), "create");
+    }
+
+    #[test]
+    fn preserves_insert_as_the_first_command_field() {
+        let command = normalize_mongo_command(
+            r#"{"insert":"users","documents":[{"_id":"u1","name":"Ava"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(command.as_object().unwrap().keys().next().unwrap(), "insert");
+        let expression = mongo_command_expression(
+            r#"{"insert":"users","documents":[{"_id":"u1","name":"Ava"}]}"#,
+        )
+        .unwrap();
+        assert!(expression.find("insert").unwrap() < expression.find("documents").unwrap());
+    }
+
+    #[test]
+    fn adds_the_required_cursor_to_aggregate_commands() {
+        let command = normalize_mongo_command(
+            r#"{"aggregate":"orders","pipeline":[{"$limit":5}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(command.get("cursor"), Some(&json!({})));
+        assert_eq!(command.as_object().unwrap().keys().next().unwrap(), "aggregate");
+    }
+
+    #[test]
+    fn command_expression_uses_extended_json_parser() {
+        let expression = mongo_command_expression(
+            r#"{"insert":"events","documents":[{"at":{"$date":"2026-01-01T00:00:00Z"}}]}"#,
+        )
+        .unwrap();
+
+        assert!(expression.starts_with("EJSON.parse("));
+        assert!(expression.contains("$date"));
     }
 }
 

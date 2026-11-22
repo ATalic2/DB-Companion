@@ -7,12 +7,53 @@ use super::{
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use sqlx::{mysql::MySqlPoolOptions, MySqlPool, Row};
+use sqlx::{mysql::{MySqlPoolOptions, MySqlRow}, Column, MySqlPool, Row, TypeInfo, ValueRef};
 use zeroize::Zeroizing;
 
 pub struct MySqlAdapter {
     pool: MySqlPool,
     db_name: String,
+}
+
+fn mysql_cell(row: &MySqlRow, index: usize) -> Result<serde_json::Value, DbError> {
+    use serde_json::Value;
+
+    let column = &row.columns()[index];
+    let type_name = column.type_info().name();
+    let decode_error = |error: sqlx::Error| DbError::Transaction(
+        format!("Could not read MySQL column '{}' ({type_name}): {error}", column.name())
+    );
+    if row.try_get_raw(index).map_err(decode_error)?.is_null() {
+        return Ok(Value::Null);
+    }
+
+    match type_name {
+        "BOOLEAN" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" =>
+            row.try_get::<i64, _>(index).map(|v| Value::Number(v.into())).map_err(decode_error),
+        "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "INT UNSIGNED" | "MEDIUMINT UNSIGNED" | "BIGINT UNSIGNED" =>
+            row.try_get::<u64, _>(index).map(|v| Value::Number(v.into())).map_err(decode_error),
+        "FLOAT" | "DOUBLE" => {
+            let value = row.try_get::<f64, _>(index).map_err(decode_error)?;
+            Ok(serde_json::Number::from_f64(value).map(Value::Number)
+                .unwrap_or_else(|| Value::String(value.to_string())))
+        }
+        "DECIMAL" | "JSON" => row.try_get_unchecked::<String, _>(index)
+            .map(Value::String).map_err(decode_error),
+        "DATE" => row.try_get::<chrono::NaiveDate, _>(index)
+            .map(|v| Value::String(v.to_string())).map_err(decode_error),
+        "DATETIME" | "TIMESTAMP" => row.try_get_unchecked::<chrono::NaiveDateTime, _>(index)
+            .map(|v| Value::String(v.to_string())).map_err(decode_error),
+        "TIME" => row.try_get::<chrono::NaiveTime, _>(index)
+            .map(|v| Value::String(v.to_string())).map_err(decode_error),
+        "YEAR" => row.try_get_unchecked::<i16, _>(index)
+            .map(|v| Value::String(v.to_string())).map_err(decode_error),
+        "SET" => row.try_get_unchecked::<String, _>(index)
+            .map(Value::String).map_err(decode_error),
+        "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BIT" | "GEOMETRY" =>
+            row.try_get_unchecked::<Vec<u8>, _>(index)
+                .map(|v| Value::String(format!("0x{}", hex::encode(v)))).map_err(decode_error),
+        _ => row.try_get::<String, _>(index).map(Value::String).map_err(decode_error),
+    }
 }
 
 impl MySqlAdapter {
@@ -248,8 +289,9 @@ impl IDatabaseAdapter for MySqlAdapter {
     async fn execute_transaction(
         &self,
         commands: Vec<String>,
-        dry_run: bool,
     ) -> Result<TransactionResult, DbError> {
+        let statements = super::plan_sql_statements(&commands)?;
+
         let mut tx = self
             .pool
             .begin()
@@ -259,11 +301,8 @@ impl IDatabaseAdapter for MySqlAdapter {
         let mut outcomes = Vec::new();
         let mut total_rows = 0u64;
 
-        for raw in &commands {
-            let stmts = super::split_sql_statements(raw);
-
-            for sql in &stmts {
-                match sqlx::query(sql).execute(&mut *tx).await {
+        for sql in &statements {
+            match sqlx::query(sql).execute(&mut *tx).await {
                     Ok(r) => {
                         total_rows += r.rows_affected();
                         outcomes.push(StatementOutcome {
@@ -286,29 +325,20 @@ impl IDatabaseAdapter for MySqlAdapter {
                             .map_err(|re| DbError::Rollback(re.to_string()))?;
                         return Ok(TransactionResult {
                             success: false,
-                            dry_run,
                             rows_affected: total_rows,
                             statements: outcomes,
                             error: Some(msg),
                         });
                     }
-                }
             }
         }
 
-        if dry_run {
-            tx.rollback()
-                .await
-                .map_err(|e| DbError::Rollback(e.to_string()))?;
-        } else {
-            tx.commit()
-                .await
-                .map_err(|e| DbError::Transaction(e.to_string()))?;
-        }
+        tx.commit()
+            .await
+            .map_err(|e| DbError::Transaction(e.to_string()))?;
 
         Ok(TransactionResult {
             success: true,
-            dry_run,
             rows_affected: total_rows,
             statements: outcomes,
             error: None,
@@ -357,18 +387,11 @@ impl IDatabaseAdapter for MySqlAdapter {
                             .map(|c| c.name().to_string())
                             .collect()
                     };
-                    let result_rows = rows
-                        .iter()
-                        .map(|row| {
-                            (0..row.columns().len())
-                                .map(|i| {
-                                    row.try_get::<String, _>(i)
-                                        .map(serde_json::Value::String)
-                                        .unwrap_or(serde_json::Value::Null)
-                                })
-                                .collect()
-                        })
-                        .collect();
+                    let result_rows = rows.iter()
+                        .map(|row| (0..row.columns().len())
+                            .map(|i| mysql_cell(row, i))
+                            .collect::<Result<Vec<_>, DbError>>())
+                        .collect::<Result<Vec<_>, DbError>>()?;
                     last_result = crate::commands::query::QueryResult {
                         columns,
                         rows: result_rows,

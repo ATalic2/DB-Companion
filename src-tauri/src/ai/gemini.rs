@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_MODEL: &str = "gemini-3.7-flash";
+const DEFAULT_MODEL: &str = "gemini-3.5-flash-lite";
 const BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // ── Internal Gemini API types ─────────────────────────────────────────────────
@@ -37,7 +37,10 @@ struct GeminiPart {
 
 #[derive(Serialize)]
 struct GeminiGenerationConfig {
-    temperature: f32,
+    #[serde(rename = "thinkingConfig", skip_serializing_if = "Option::is_none")]
+    thinking_config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,7 +73,66 @@ struct GeminiPartResponse {
 
 pub struct GeminiProvider;
 
+#[derive(Default)]
+struct GeminiSseDecoder {
+    pending: Vec<u8>,
+}
+
+impl GeminiSseDecoder {
+    fn push(&mut self, bytes: &[u8], finish: bool) -> Result<Vec<String>> {
+        self.pending.extend_from_slice(bytes);
+        let mut text_parts = Vec::new();
+        while let Some(end) = self.pending.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=end).collect();
+            Self::read_line(&line, &mut text_parts)?;
+        }
+        if finish && !self.pending.is_empty() {
+            Self::read_line(&std::mem::take(&mut self.pending), &mut text_parts)?;
+        }
+        Ok(text_parts)
+    }
+
+    fn read_line(line: &[u8], text_parts: &mut Vec<String>) -> Result<()> {
+        let line = std::str::from_utf8(line)
+            .map_err(|error| anyhow::anyhow!("Invalid Gemini stream text: {error}"))?
+            .trim_end_matches(['\r', '\n']);
+        let Some(data) = line.strip_prefix("data:") else { return Ok(()); };
+        let data = data.trim_start();
+        if data == "[DONE]" { return Ok(()); }
+        let value: serde_json::Value = serde_json::from_str(data)
+            .map_err(|error| anyhow::anyhow!("Invalid Gemini stream event: {error}"))?;
+        if let Some(error) = value.pointer("/error/message").and_then(|v| v.as_str()) {
+            bail!("Gemini stream error: {error}");
+        }
+        if let Some(parts) = value.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                    text_parts.push(text.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl GeminiProvider {
+    fn thinking_config(credentials: &ProviderCredentials) -> Option<serde_json::Value> {
+        let model = Self::model(credentials);
+        let allowed: &[&str] = match model.as_str() {
+            "gemini-3.7-flash" | "gemini-3.8-flash" => &["low", "medium", "high"],
+            "gemini-3.6-flash" | "gemini-3.5-flash" | "gemini-3.5-flash-lite" => &["minimal", "low", "medium", "high"],
+            _ => &[],
+        };
+        credentials.reasoning_effort.as_deref()
+            .filter(|level| allowed.contains(level))
+            .map(|level| serde_json::json!({"thinkingLevel": level}))
+    }
+
+    fn temperature(model: &str, value: f32) -> Option<f32> {
+        // Gemini 3.8 Flash requires the default sampling configuration.
+        (model != "gemini-3.8-flash").then_some(value)
+    }
+
     fn client() -> Client {
         Client::builder()
             .use_rustls_tls()
@@ -170,7 +232,8 @@ impl GeminiProvider {
                 }],
             }),
             generation_config: GeminiGenerationConfig {
-                temperature: 0.4,
+                thinking_config: Self::thinking_config(credentials),
+                temperature: Self::temperature(&model, 0.4),
                 max_output_tokens: None,
                 response_mime_type: Some("application/json".into()),
                 response_schema: None,
@@ -191,10 +254,11 @@ impl IAiProvider for GeminiProvider {
             id: "gemini".into(),
             display_name: "Google Gemini".into(),
             models: vec![
+                "gemini-3.5-flash-lite".into(),
                 "gemini-3.7-flash".into(),
+                "gemini-3.8-flash".into(),
                 "gemini-3.6-flash".into(),
                 "gemini-3.5-flash".into(),
-                "gemini-3.5-flash-lite".into(),
             ],
             requires_key: true,
             requires_url: false,
@@ -246,7 +310,8 @@ Respond with JSON matching the schema exactly. No markdown, no explanation outsi
             }],
             system_instruction: None,
             generation_config: GeminiGenerationConfig {
-                temperature: 0.2,
+                thinking_config: Self::thinking_config(credentials),
+                temperature: Self::temperature(&model, 0.2),
                 max_output_tokens: None,
                 response_mime_type: Some("application/json".into()),
                 response_schema: Some(change_plan_schema()),
@@ -301,7 +366,8 @@ Respond with JSON matching the schema exactly. No markdown, no explanation outsi
                 }],
             }),
             generation_config: GeminiGenerationConfig {
-                temperature: 0.4,
+                thinking_config: Self::thinking_config(credentials),
+                temperature: Self::temperature(&model, 0.4),
                 max_output_tokens: None,
                 response_mime_type: Some("application/json".into()),
                 response_schema: None,
@@ -309,7 +375,12 @@ Respond with JSON matching the schema exactly. No markdown, no explanation outsi
         };
 
         let request_json = serde_json::to_string_pretty(&body).unwrap_or_default();
-        let mut resp = Self::client().post(&url).json(&body).send().await?;
+        let mut resp = Self::client()
+            .post(&url)
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .json(&body)
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -318,26 +389,19 @@ Respond with JSON matching the schema exactly. No markdown, no explanation outsi
         }
 
         let mut full = String::new();
+        let mut decoder = GeminiSseDecoder::default();
         while let Some(chunk) = resp.chunk().await? {
-            let text = String::from_utf8_lossy(&chunk);
-            for line in text.lines() {
-                let line = line.trim();
-                if let Some(json_str) = line.strip_prefix("data: ") {
-                    if json_str == "[DONE]" {
-                        break;
-                    }
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                        if let Some(t) = val
-                            .pointer("/candidates/0/content/parts/0/text")
-                            .and_then(|v| v.as_str())
-                        {
-                            full.push_str(t);
-                            on_chunk(t.to_string());
-                        }
-                    }
-                }
+            for text in decoder.push(&chunk, false)? {
+                full.push_str(&text);
+                on_chunk(text);
             }
         }
+        for text in decoder.push(&[], true)? {
+            full.push_str(&text);
+            on_chunk(text);
+        }
+
+        if full.is_empty() { bail!("Gemini returned no text output"); }
 
         Ok((full, request_json))
     }
@@ -399,4 +463,53 @@ fn change_plan_schema() -> serde_json::Value {
 #[allow(dead_code)]
 fn _use_chat_schema() -> serde_json::Value {
     chat_response_schema()
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::{GeminiGenerationConfig, GeminiProvider, GeminiSseDecoder};
+    use crate::ai::ProviderCredentials;
+
+    #[test]
+    fn thinking_level_is_model_specific_and_optional() {
+        let mut credentials = ProviderCredentials {
+            api_key: None, base_url: None, model: Some("gemini-3.8-flash".into()),
+            reasoning_effort: None,
+        };
+        assert!(GeminiProvider::thinking_config(&credentials).is_none());
+        credentials.reasoning_effort = Some("minimal".into());
+        assert!(GeminiProvider::thinking_config(&credentials).is_none());
+        credentials.reasoning_effort = Some("low".into());
+        assert_eq!(GeminiProvider::thinking_config(&credentials), Some(serde_json::json!({"thinkingLevel": "low"})));
+    }
+
+    #[test]
+    fn gemini_38_omits_unsupported_temperature() {
+        let config = GeminiGenerationConfig {
+            thinking_config: None,
+            temperature: GeminiProvider::temperature("gemini-3.8-flash", 0.4),
+            max_output_tokens: None,
+            response_mime_type: None,
+            response_schema: None,
+        };
+        assert!(serde_json::to_value(config).unwrap().get("temperature").is_none());
+        assert_eq!(GeminiProvider::temperature("gemini-3.7-flash", 0.4), Some(0.4));
+    }
+
+    #[test]
+    fn decodes_json_and_utf8_split_across_network_chunks() {
+        let event = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"café\"}]}}]}\n\n";
+        let bytes = event.as_bytes();
+        let split = bytes.iter().position(|byte| *byte == 0xc3).unwrap() + 1;
+        let mut decoder = GeminiSseDecoder::default();
+        assert!(decoder.push(&bytes[..split], false).unwrap().is_empty());
+        assert_eq!(decoder.push(&bytes[split..], false).unwrap(), vec!["café"]);
+        assert!(decoder.push(b"data: [DONE]\n", true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn reports_malformed_events_instead_of_dropping_them() {
+        let mut decoder = GeminiSseDecoder::default();
+        assert!(decoder.push(b"data: {broken}\n", false).is_err());
+    }
 }

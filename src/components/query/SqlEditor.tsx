@@ -62,7 +62,7 @@ export function SqlEditor({ value, onChange, onRunAll, onRunAtCursor, onCancel, 
   const btnBase: React.CSSProperties = {
     border: "none", borderRadius: 5, padding: "4px 12px",
     fontSize: 11, fontFamily: "inherit", cursor: disabled ? "not-allowed" : "pointer",
-    fontWeight: 500, display: "flex", alignItems: "center", gap: 5,
+    fontWeight: 500, display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0,
   };
 
   return (
@@ -73,11 +73,11 @@ export function SqlEditor({ value, onChange, onRunAll, onRunAtCursor, onCancel, 
         padding: "5px 10px", borderBottom: "1px solid #2a2f3d",
         background: "#111318", flexShrink: 0,
       }}>
-        <span style={{ fontSize: 10, color: "#374151", fontFamily: "monospace", marginRight: 4 }}>
+        <span style={{ fontSize: 10, color: "#374151", fontFamily: "monospace", marginRight: 4, whiteSpace: "nowrap", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
           Ctrl+Enter · cursor &nbsp;·&nbsp; Ctrl+Shift+Enter · all
         </span>
 
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexShrink: 0 }}>
           {running && (
             <button
               onClick={onCancel}
@@ -144,7 +144,7 @@ export function SqlEditor({ value, onChange, onRunAll, onRunAtCursor, onCancel, 
             width: 44, flexShrink: 0,
             background: "#0d0f14", borderRight: "1px solid #1a1f2e",
             padding: "12px 0", textAlign: "right",
-            fontFamily: "monospace", fontSize: 12, color: "#374151",
+            fontFamily: "monospace", fontSize: 14, color: "#374151",
             userSelect: "none", overflowY: "hidden", lineHeight: "1.6",
           }}
         >
@@ -164,7 +164,7 @@ export function SqlEditor({ value, onChange, onRunAll, onRunAtCursor, onCancel, 
           style={{
             flex: 1,
             background: "#0a0b0d", border: "none", outline: "none",
-            color: "#e8eaf0", fontFamily: "monospace", fontSize: 12,
+            color: "#e8eaf0", fontFamily: "monospace", fontSize: 14,
             lineHeight: 1.6, padding: 12, resize: "none",
             whiteSpace: "pre", overflowX: "auto",
           }}

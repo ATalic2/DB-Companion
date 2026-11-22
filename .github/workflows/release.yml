@@ -85,7 +85,41 @@ jobs:
           tagName: ${{ steps.release_version.outputs.tag }}
           releaseName: "DbCompanion v__VERSION__"
           releaseBody: |
-            See the changelog for details on what's new in this release.
+            ## DbCompanion ${{ steps.release_version.outputs.tag }}
+
+            A desktop database client with a built-in AI assistant. Explore your schema, write queries, and review AI-proposed changes before executing them.
+
+            ### Feature overview
+
+            | Area | What you can do |
+            | --- | --- |
+            | Database connections | Work with PostgreSQL, MySQL, SQL Server, MongoDB, and SQLite. |
+            | AI assistant | Ask questions about your live schema or describe a database change in plain English. |
+            | Change review | Inspect proposed plans and risk scores before executing them. Transactions and rollback are used where supported by the database engine. |
+            | Query editor | Run SQL for relational databases or use JSON and script modes for MongoDB. |
+            | Schema browser | Browse tables, collections, columns, indexes, and constraints. |
+            | Credential vault | Store connection details and AI provider keys encrypted at rest. |
+
+            ### Downloads
+
+            Choose the asset for your operating system and processor from **Assets** below. Files appear as each platform build finishes.
+
+            | Platform | Architecture | Download | Installation |
+            | --- | --- | --- | --- |
+            | Windows | x64 | `.msi` or `.exe` | Run the installer. |
+            | macOS (Apple Silicon) | ARM64 / `aarch64` | `.dmg` | Open the disk image and drag DbCompanion to Applications. |
+            | macOS (Intel) | x64 / `x86_64` | `.dmg` | Open the disk image and drag DbCompanion to Applications. |
+            | Linux | x64 / `amd64` | `.AppImage` or `.deb` | Make the AppImage executable and run it, or install the Debian package. |
+
+            ### First launch
+
+            1. Install and open DbCompanion.
+            2. Add your database connection.
+            3. Add a Gemini or OpenAI API key in **Settings** to use the AI assistant.
+
+            **MongoDB:** Install [`mongosh`](https://www.mongodb.com/try/download/shell) and make sure it is available on your `PATH` before connecting.
+
+            See the [README](https://github.com/${{ github.repository }}/blob/${{ steps.release_version.outputs.tag }}/README.md) for more details, or [report an issue](https://github.com/${{ github.repository }}/issues).
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
